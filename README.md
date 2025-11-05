@@ -22,19 +22,20 @@ It is designed for **real-time regime detection** and **quantitative market stru
 * **Graceful Fallbacks** — handles early-session and insufficient-data scenarios without breaking scheduler
 * **Diagnostics & Visualization** — supports clean visual overlays of market structure and regime segments
 
----
-
-### **Core Components**
-
-| Module                                | Description                                                 |
-| ------------------------------------- | ----------------------------------------------------------- |
-| `intelligence/hybrid_regime_infer.py` | Core inference engine integrating HMM + Wasserstein models  |
-| `intelligence/data/`                  | Pre-trained model files (`.pkl` for HMM, clusterer, scaler) |
-| `modules/config.py`                   | API configuration and constants                             |
-| `test_infer.py`                       | Standalone diagnostic runner with visualization support     |
-| `trend_adaptive.py`                   | Example integration with real-time trading system           |
 
 ---
+
+### **Repository Overview**
+
+| File / Module                             | Description                                                                                                                                                          |
+| ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`intelligence/hybrid_regime_infer.py`** | Core inference engine combining Wasserstein clustering and Gaussian HMM logic. Includes lazy model loading, multi-scale smoothing, and real-time confidence metrics. |
+| **`run_inference_plot.py`**                    | Diagnostic runner and visualizer. Fetches recent data, runs full inference, and plots regime labels on the price chart. Ideal for testing and demonstration.         |
+| **`modules/config.py`**                   | Configuration file storing API credentials and server details. Replace `YOUR_API_KEY` with your actual OpenAlgo key before running.                                  |
+| **`intelligence/data/`**                  | Directory containing pre-trained `.pkl` model files — HMM, Wasserstein cluster centroids, and StandardScaler.                                                        |
+| **`LICENSE`**                             | Legal license (MIT or CC BY-NC-SA 4.0). See section below.                                                                                                           |
+| **`README.md`**                           | This documentation.                                                                                                                                                  |
+
 
 ### **Conceptual Model**
 
@@ -83,14 +84,80 @@ Choppy          0.219
 
 ```bash
 git clone git@github.com:kratu/wess_hmm.git
-cd hybrid-regime-inference
-pip install -r requirements.txt
 ```
+
+Config
+
+Change 'config.py' with your OpenAlgo API KEY
 
 For visualization:
 
+
+### **Configuration**
+
+All runtime settings are stored in `modules/config.py`:
+
+```python
+import os
+
+API_KEY  = os.getenv("OPENALGO_API_KEY", "YOUR_API_KEY")
+API_HOST = os.getenv("OPENALGO_API_HOST", "http://127.0.0.1:5000")
+WS_URL   = "ws://127.0.0.1:8765"
+```
+
+Before running the inference, **replace** `"YOUR_API_KEY"` with your valid key or export it securely as an environment variable:
+
 ```bash
-python test_infer.py
+export OPENALGO_API_KEY="your_real_key_here"
+export OPENALGO_API_HOST="https://api.openalgo.in"
+```
+
+---
+
+### **Usage**
+
+#### **1. Run the diagnostic inference**
+
+Use the standalone runner to test the hybrid model on recent 5-minute bars:
+
+```bash
+python run_inference.py
+```
+
+This script:
+
+* Fetches live or recent data from OpenAlgo,
+* Runs multi-scale HMM + Wasserstein regime inference,
+* Prints segment breakdowns (e.g., Trending / Range / Choppy),
+* Optionally plots regime labels over price.
+
+
+### **2. Integrate into Trading Logic**
+
+A complete working example is provided in **`integration_example.py`**.
+It demonstrates how to:
+
+* Fetch 5-minute intraday data from **OpenAlgo**.
+* Compute required technical features (returns, ADX, ATR, slope, R², volatility).
+* Run the **Hybrid HMM + Wasserstein** inference on live data.
+* Gracefully skip execution when early-session data is insufficient.
+* Print regime segments and current label in real time.
+
+#### **Typical Integration Flow**
+
+```python
+import hybrid_regime_infer as infer
+infer.load_models_once()
+
+df = client.history(symbol="NIFTY", exchange="NFO", interval="5m", ...)
+features = infer.compute_features(df)
+
+if features is not None and len(features) > 10:
+    result = infer.infer_hybrid_regime_for_live_data(df)
+    if result["regime"] in ["Trending", "Range"]:
+        proceed_with_strategy()
+    else:
+        skip_trade()
 ```
 
 ---
