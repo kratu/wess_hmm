@@ -1,9 +1,17 @@
+
 """
 Hybrid Wasserstein + HMM Market Regime Inference
 ------------------------------------------------
 Loads pre-trained Wasserstein & HMM models and applies them dynamically
 to new data (API or CSV). Usable as both a standalone diagnostic tool
 and an importable inference module for live trading logic.
+
+Version: 1.0
+Author: Jeevan Jonas
+Date: 2024-06-15
+License: MIT License
+
+
 ------------------------------------------------
 """
 
@@ -286,8 +294,8 @@ class WassersteinClusterer:
         return False
     def summary(self):
         if self.centroids is None:
-            print("⚠️ No centroids — model not fitted yet."); return
-        print("\n🧩 Wasserstein Cluster Summary:")
+            print("No centroids — model not fitted yet."); return
+        print("\nWasserstein Cluster Summary:")
         for i, c in enumerate(self.centroids):
             print(f"  Cluster {i}: var={np.var(c):.6f}, mean={np.mean(c):.6f}, len={len(c)}")
 
