@@ -84,6 +84,10 @@ Choppy          0.219
 
 ```bash
 git clone git@github.com:kratu/wess_hmm.git
+
+# 2. Install dependencies
+pip install -r requirements.txt
+
 ```
 
 Config

@@ -1,0 +1,8 @@
+numpy>=1.26.0
+pandas>=2.2.0
+matplotlib>=3.9.0
+scikit-learn>=1.5.0
+hmmlearn>=0.3.0
+joblib>=1.4.0
+talib-binary>=0.4.28
+pytz>=2024.1
