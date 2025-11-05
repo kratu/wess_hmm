@@ -105,13 +105,6 @@ API_HOST = os.getenv("OPENALGO_API_HOST", "http://127.0.0.1:5000")
 WS_URL   = "ws://127.0.0.1:8765"
 ```
 
-Before running the inference, **replace** `"YOUR_API_KEY"` with your valid key or export it securely as an environment variable:
-
-```bash
-export OPENALGO_API_KEY="your_real_key_here"
-export OPENALGO_API_HOST="https://api.openalgo.in"
-```
-
 ---
 
 ### **Usage**
@@ -143,22 +136,6 @@ It demonstrates how to:
 * Gracefully skip execution when early-session data is insufficient.
 * Print regime segments and current label in real time.
 
-#### **Typical Integration Flow**
-
-```python
-import hybrid_regime_infer as infer
-infer.load_models_once()
-
-df = client.history(symbol="NIFTY", exchange="NFO", interval="5m", ...)
-features = infer.compute_features(df)
-
-if features is not None and len(features) > 10:
-    result = infer.infer_hybrid_regime_for_live_data(df)
-    if result["regime"] in ["Trending", "Range"]:
-        proceed_with_strategy()
-    else:
-        skip_trade()
-```
 
 ---
 

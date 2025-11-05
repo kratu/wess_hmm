@@ -1,4 +1,38 @@
 
+"""
+Hybrid Regime Inference — Integration Example
+---------------------------------------------
+This script demonstrates how to integrate the Hybrid HMM + Wasserstein
+Regime Inference model into a live trading or research environment.
+
+It fetches intraday market data using the OpenAlgo API, computes
+technical features (returns, ADX, ATR, slope, R², volatility),
+and applies the pre-trained hybrid model to classify the current
+market regime as one of:
+    • Trending
+    • Range / Transitional
+    • Choppy
+
+The script prints time-segmented regime summaries and updates the
+latest regime label in real time.
+
+Key Features:
+    • Uses pre-trained HMM + Wasserstein cluster models
+    • Handles insufficient early-session data gracefully
+    • Designed for scheduled or periodic execution
+    • Can be extended to enable or disable trading strategies
+      based on inferred market conditions
+
+Dependencies:
+    - hybrid_regime_infer.py  (core inference logic)
+    - config.py               (API key and connection settings)
+    - OpenAlgo API            (for live market data)
+
+Intended Use:
+    For educational and research purposes only. Not financial advice.
+"""
+
+
 import hybrid_regime_infer as infer
 from datetime import datetime, timedelta, time as dtime
 import pandas as pd
