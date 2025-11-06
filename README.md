@@ -29,7 +29,7 @@ It is designed for **real-time regime detection** and **quantitative market stru
 
 | File / Module                             | Description                                                                                                                           |
 | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| **`intelligence/hybrid_regime_infer.py`** | Core inference engine combining Wasserstein clustering and Gaussian HMM logic. Includes lazy model loading and multi-scale smoothing. |
+| **`hybrid_regime_infer.py`** | Core inference engine combining Wasserstein clustering and Gaussian HMM logic. Includes lazy model loading and multi-scale smoothing. |
 | **`run_inference_plot.py`**               | Diagnostic runner and visualizer. Fetches recent data, runs full inference, and plots regime labels.                                  |
 | **`config.py`**                           | Stores API credentials and server details. Replace `YOUR_API_KEY` with your actual OpenAlgo key before running.                       |
 | **`/data/`**                              | Contains pre-trained `.pkl` model files — HMM, Wasserstein centroids, and StandardScaler.                                             |
@@ -171,7 +171,7 @@ Users are responsible for verifying correctness, suitability, and regulatory com
 
 ## **License**
 
-MIT License (recommended).
+Apache License, Version 2.0
 You are free to use, modify, and distribute the code with attribution.
 
 ---
@@ -190,8 +190,9 @@ If you use this framework:
 Developed by **Jeevan Jonas**
 Visual Artist · UX Designer · Algorithmic Trader
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
-© 2025 Jeevan Jonas — Released under the MIT License.
-Open-source; use responsibly for **research and education**.
+© 2025 Jeevan Jonas — Licensed under the Apache License, Version 2.0.  
+You may use, modify, and distribute this software under the terms of the Apache 2.0 License.  
+Open-source; suitable for research, education, and derivative development.
 
