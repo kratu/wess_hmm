@@ -49,12 +49,19 @@ IST = timezone("Asia/Kolkata")
 def regime_inference():
     global latest_regime
 
+    now = datetime.now(IST)
     today = datetime.now(IST).strftime("%Y-%m-%d")
+
+    # --- Hybrid Rule: Force 1m until 10:30, else 5m ---
+    if now.time() < dtime(10,30):
+        timeframe = "1m"
+    else:
+        timeframe = "5m"  # usually "5m"
 
     df = client.history(
         symbol=SYMBOL,
         exchange="NFO",
-        interval="5m",
+        interval=timeframe,
         start_date=today,
         end_date=today
     )

@@ -1,10 +1,3 @@
-"""
-Hybrid Wasserstein + HMM Market Regime Trainer
-----------------------------------------------
-Trains Wasserstein centroids + HMM model from
-5-min historical data and persists model artifacts.
-----------------------------------------------
-"""
 
 """
 ───────────────────────────────────────────────────────────────────────────────
@@ -32,6 +25,12 @@ Result:
     • Computationally light
     • Structurally stable across years
     • Sensitive to current market behaviour
+
+Version: 1.0
+Author: Jeevan Jonas
+Date: 2024-06-15
+License: MIT License
+Copyright (c) 2024 Jeevan Jonas
 ───────────────────────────────────────────────────────────────────────────────
 """
 import warnings, joblib, numpy as np, pandas as pd, talib
@@ -68,7 +67,7 @@ df[time_col] = pd.to_datetime(df[time_col], errors="coerce")
 df.dropna(subset=[time_col], inplace=True)
 df.set_index(time_col, inplace=True)
 df.sort_index(inplace=True)
-print(f"✅ Loaded {len(df):,} bars ({df.index.min()} → {df.index.max()})")
+print(f"✔︎ Loaded {len(df):,} bars ({df.index.min()} → {df.index.max()})")
 
 # ======================================================
 # FEATURE ENGINE
@@ -123,7 +122,7 @@ features = compute_features(df)
 scaler = StandardScaler()
 scaled_feats = scaler.fit_transform(features)
 
-print(f"✅ Features computed: {features.shape[0]} samples × {features.shape[1]} features")
+print(f"✔︎ Features computed: {features.shape[0]} samples × {features.shape[1]} features")
 
 # ======================================================
 # TRAIN HYBRID COMPONENTS
@@ -141,24 +140,24 @@ for i in range(len(scaled_feats)):
         clusterer.fit(distributions[-100:])
 
 clusterer.fit(distributions[-1000:])
-print("✅ Wasserstein centroids trained.")
+print("✔︎ Wasserstein centroids trained.")
 
 # ======================================================
 # TRAIN HMM
 # ======================================================
 hmmf = GaussianHMM(
     n_components=N_CLUSTERS,
-    covariance_type="full",     # ✅ CHANGE: full covariance for richer dynamics
+    covariance_type="full",     # HANGE: full covariance for richer dynamics
     n_iter=200,
     random_state=42
 )
-print("🧠 Training HMM on scaled features...")
+print("Training HMM on scaled features...")
 hmmf.fit(scaled_feats)
-print("✅ HMM training complete.")
+print("✔︎ HMM training complete.")
 
 # Inspect state usage
 pred_states = hmmf.predict(scaled_feats)
-print("\n📊 HMM state frequencies:")
+print("\nHMM state frequencies:")
 print(pd.Series(pred_states).value_counts())
 
 # Optional: compute mean ADX by state to decide mapping
@@ -167,7 +166,7 @@ for i in range(N_CLUSTERS):
     state_means.append(features.loc[pred_states == i, "adx"].mean())
 print("Mean ADX per state:", state_means)
 
-print("\n⚙️ Suggest STATE_TO_LABEL mapping for inference:")
+print("\n❋ Suggest STATE_TO_LABEL mapping for inference:")
 sorted_states = np.argsort(state_means)[::-1]
 print({sorted_states[0]: "Trending", sorted_states[1]: "Range", sorted_states[2]: "Choppy"})
 
@@ -185,5 +184,5 @@ print(state_stats)
 joblib.dump(clusterer, MODEL_FILE_WASS)
 joblib.dump(hmmf, MODEL_FILE_HMM)
 joblib.dump(scaler, SCALER_FILE)
-print(f"💾 Saved → {MODEL_FILE_WASS}, {MODEL_FILE_HMM}, {SCALER_FILE}")
+print(f"✦ Saved → {MODEL_FILE_WASS}, {MODEL_FILE_HMM}, {SCALER_FILE}")
 

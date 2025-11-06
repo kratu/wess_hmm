@@ -31,8 +31,8 @@ It is designed for **real-time regime detection** and **quantitative market stru
 | ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **`intelligence/hybrid_regime_infer.py`** | Core inference engine combining Wasserstein clustering and Gaussian HMM logic. Includes lazy model loading, multi-scale smoothing, and real-time confidence metrics. |
 | **`run_inference_plot.py`**                    | Diagnostic runner and visualizer. Fetches recent data, runs full inference, and plots regime labels on the price chart. Ideal for testing and demonstration.         |
-| **`modules/config.py`**                   | Configuration file storing API credentials and server details. Replace `YOUR_API_KEY` with your actual OpenAlgo key before running.                                  |
-| **`intelligence/data/`**                  | Directory containing pre-trained `.pkl` model files — HMM, Wasserstein cluster centroids, and StandardScaler.                                                        |
+| **`config.py`**                   | Configuration file storing API credentials and server details. Replace `YOUR_API_KEY` with your actual OpenAlgo key before running.                                  |
+| **`/data/`**                  | Directory containing pre-trained `.pkl` model files — HMM, Wasserstein cluster centroids, and StandardScaler.                                                        |
 | **`LICENSE`**                             | Legal license (MIT or CC BY-NC-SA 4.0). See section below.                                                                                                           |
 | **`README.md`**                           | This documentation.                                                                                                                                                  |
 
@@ -137,7 +137,7 @@ It demonstrates how to:
 * Fetch 5-minute intraday data from **OpenAlgo**.
 * Compute required technical features (returns, ADX, ATR, slope, R², volatility).
 * Run the **Hybrid HMM + Wasserstein** inference on live data.
-* Gracefully skip execution when early-session data is insufficient.
+* Gracefully sets timeframe to 1m for early-session data to work with insufficient data.
 * Print regime segments and current label in real time.
 
 
