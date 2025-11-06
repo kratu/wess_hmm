@@ -11,7 +11,6 @@ Author: Jeevan Jonas
 Date: 2024-06-15
 License: MIT License
 
-
 ------------------------------------------------
 """
 
@@ -21,19 +20,11 @@ from datetime import datetime, timedelta
 from pytz import timezone
 from sklearn.preprocessing import StandardScaler
 from hmmlearn.hmm import GaussianHMM
-from openalgo import api
 import os
-from config import API_KEY, API_HOST
-
-# --- Backward compatibility alias for pickled clusterer ---
-sys.modules["wasserstein_clusterer"] = sys.modules[__name__]
 
 # --------------------------------------------------
 # CONFIG
 # --------------------------------------------------
-
-
-
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 

@@ -102,11 +102,9 @@ For visualization:
 All runtime settings are stored in `config.py`:
 
 ```python
-import os
 
 API_KEY  = os.getenv("OPENALGO_API_KEY", "YOUR_API_KEY")
 API_HOST = os.getenv("OPENALGO_API_HOST", "http://127.0.0.1:5000")
-WS_URL   = "ws://127.0.0.1:8765"
 ```
 
 ---
@@ -137,10 +135,18 @@ It demonstrates how to:
 * Fetch 5-minute intraday data from **OpenAlgo**.
 * Compute required technical features (returns, ADX, ATR, slope, R², volatility).
 * Run the **Hybrid HMM + Wasserstein** inference on live data.
-* Gracefully sets timeframe to 1m for early-session data to work with insufficient data.
+* Gracefully sets timeframe to 1m in early-session to work with insufficient data (pre 10:30).
 * Print regime segments and current label in real time.
 
+---
 
+### **Future Improvements**
+
+Retrain it with much longer data 2008-2025
+Tune it to for accurate evaluation - Range, Choppy market regimes
+Smoother regime flips
+
+```
 ---
 
 ### **Intended Use**
