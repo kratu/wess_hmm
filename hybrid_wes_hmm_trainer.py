@@ -38,7 +38,7 @@ from datetime import datetime
 from collections import deque
 from sklearn.preprocessing import StandardScaler
 from hmmlearn.hmm import GaussianHMM
-from wasserstein_clusterer import WassersteinClusterer
+from hybrid_regime_infer import WassersteinClusterer
 
 warnings.filterwarnings("ignore")
 

@@ -22,7 +22,8 @@ from pytz import timezone
 from sklearn.preprocessing import StandardScaler
 from hmmlearn.hmm import GaussianHMM
 from openalgo import api
-from modules.config import API_KEY, API_HOST
+import os
+from config import API_KEY, API_HOST
 
 # --- Backward compatibility alias for pickled clusterer ---
 sys.modules["wasserstein_clusterer"] = sys.modules[__name__]
@@ -30,10 +31,17 @@ sys.modules["wasserstein_clusterer"] = sys.modules[__name__]
 # --------------------------------------------------
 # CONFIG
 # --------------------------------------------------
-MODEL_FILE_HMM  = "data/regime_hmm.pkl"
-MODEL_FILE_WASS = "data/regime_wasserstein.pkl"
-SCALER_FILE     = "data/regime_scaler.pkl"
+
+
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(BASE_DIR, "data")
+
+MODEL_FILE_HMM  = os.path.join(DATA_DIR, "regime_hmm.pkl")
+MODEL_FILE_WASS = os.path.join(DATA_DIR, "regime_wasserstein.pkl")
+SCALER_FILE     = os.path.join(DATA_DIR, "regime_scaler.pkl")
 STATE_TO_LABEL  = {0: "Trending", 1: "Range", 2: "Choppy"}
+
 MIN_HOLD_MIN    = 20
 IST = timezone("Asia/Kolkata")
 

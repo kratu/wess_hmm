@@ -18,22 +18,21 @@ from pytz import timezone
 # INTERNAL IMPORTS
 # --------------------------------------------------
 from openalgo import api
-from modules.config import API_KEY, API_HOST
-from modules.options import get_futures_symbol
-import intelligence.hybrid_regime_infer as infer  # ← use module namespace directly
+from config import API_KEY, API_HOST
+import hybrid_regime_infer as infer  # ← use module namespace directly
 
 # --------------------------------------------------
 # INITIALIZE
 # --------------------------------------------------
 IST = timezone("Asia/Kolkata")
 client = api(api_key=API_KEY, host=API_HOST)
-fut = get_futures_symbol()
+SYMBOL = "NIFTY25NOV25FUT"
 today = datetime.now(IST).strftime("%Y-%m-%d")
 
-print(f"\n[HYBRID DIAGNOSTICS] Fetching {fut} for {today}")
+print(f"\n[HYBRID DIAGNOSTICS] Fetching {SYMBOL} for {today}")
 
 df = client.history(
-    symbol=fut,
+    symbol=SYMBOL,
     exchange="NFO",
     interval="5m",
     start_date=today,

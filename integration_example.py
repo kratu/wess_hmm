@@ -43,7 +43,7 @@ from config import API_KEY, API_HOST
 
 client = api(api_key=API_KEY, host=API_HOST)
 
-SYMBOL = "NIFTY"
+SYMBOL = "NIFTY25NOV25FUT"
 IST = timezone("Asia/Kolkata")
 
 def regime_inference():
@@ -65,6 +65,15 @@ def regime_inference():
         start_date=today,
         end_date=today
     )
+
+    # --- Handle API returning dict instead of DataFrame ---
+    if isinstance(df, dict):
+        # Extract candle data safely
+        candles = df.get("data") or df.get("result", {}).get("data", [])
+        if not candles:
+            raise ValueError("No data from OpenAlgo.")
+        df = pd.DataFrame(candles)
+
 
     if df.empty:
         raise ValueError("No data from OpenAlgo.")

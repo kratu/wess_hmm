@@ -99,7 +99,7 @@ For visualization:
 
 ### **Configuration**
 
-All runtime settings are stored in `modules/config.py`:
+All runtime settings are stored in `config.py`:
 
 ```python
 import os
