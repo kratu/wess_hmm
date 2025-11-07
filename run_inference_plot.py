@@ -6,7 +6,7 @@ HMM + Wasserstein hybrid model on live or recent data.
 --------------------------------------------
 """
 
-import os
+import os, sys
 import time
 import numpy as np
 import pandas as pd
@@ -48,17 +48,31 @@ df = client.history(
     end_date=today,
 )
 
+# # --- Handle API returning dict instead of DataFrame ---
+# if isinstance(df, dict):
+#     # Extract candle data safely
+#     candles = df.get("data") or df.get("result", {}).get("data", [])
+#     if not candles:
+#         raise ValueError("No data from OpenAlgo. Ensure API key and symbol are correct.")
+#     df = pd.DataFrame(candles)
+
+
+# if df.empty:
+#     raise ValueError("No data from OpenAlgo.")
+
+
 # --- Handle API returning dict instead of DataFrame ---
 if isinstance(df, dict):
-    # Extract candle data safely
     candles = df.get("data") or df.get("result", {}).get("data", [])
     if not candles:
-        raise ValueError("No data from OpenAlgo. Ensure API key and symbol are correct.")
+        print(f"[Hybrid] No data from OpenAlgo. Ensure API_KEY is edited and SYMBOL are correct.")
+        sys.exit(0)
     df = pd.DataFrame(candles)
 
-
-if df.empty:
-    raise ValueError("No data from OpenAlgo.")
+# --- Empty or invalid data guard ---
+if df is None or df.empty:
+    print(f"[Hybrid] Empty dataset for {SYMBOL} — exiting gracefully.")
+    sys.exit(0)
 
 # --------------------------------------------------
 # DATA NORMALIZATION

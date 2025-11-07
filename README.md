@@ -32,7 +32,7 @@ It is designed for **real-time regime detection** and **quantitative market stru
 | **`hybrid_regime_infer.py`** | Core inference engine combining Wasserstein clustering and Gaussian HMM logic. Includes lazy model loading and multi-scale smoothing. |
 | **`run_inference_plot.py`**               | Diagnostic runner and visualizer. Fetches recent data, runs full inference, and plots regime labels.                                  |
 | **`config.py`**                           | Stores API credentials and server details. Replace `YOUR_API_KEY` with your actual OpenAlgo key before running.                       |
-| **`/data/`**                              | Contains pre-trained `.pkl` model files — HMM, Wasserstein centroids, and StandardScaler.                                             |
+| **`data/`**                              | Contains pre-trained `.pkl` model files — HMM, Wasserstein centroids, and StandardScaler.                                             |
 | **`LICENSE`**                             | Legal license (MIT or CC BY-NC-SA 4.0).                                                                                               |
 | **`README.md`**                           | This documentation.                                                                                                                   |
 

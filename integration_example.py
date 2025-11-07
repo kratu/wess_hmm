@@ -37,6 +37,7 @@ import hybrid_regime_infer as infer
 from datetime import datetime, timedelta, time as dtime
 import pandas as pd
 import numpy as np
+import sys
 from openalgo import api
 from pytz import timezone
 from config import API_KEY, API_HOST
@@ -65,18 +66,18 @@ def regime_inference():
         start_date=today,
         end_date=today
     )
-
     # --- Handle API returning dict instead of DataFrame ---
     if isinstance(df, dict):
-        # Extract candle data safely
         candles = df.get("data") or df.get("result", {}).get("data", [])
         if not candles:
-            raise ValueError("No data from OpenAlgo.")
+            print(f"[Hybrid] No data from OpenAlgo. Ensure API_KEY is edited and SYMBOL are correct.")
+            sys.exit(0)
         df = pd.DataFrame(candles)
 
-
-    if df.empty:
-        raise ValueError("No data from OpenAlgo. Ensure API key and symbol are correct.")
+    # --- Empty or invalid data guard ---
+    if df is None or df.empty:
+        print(f"[Hybrid] Empty dataset for {SYMBOL} — exiting gracefully.")
+        sys.exit(0)
 
     # Normalize datetime
     df.columns = [c.lower() for c in df.columns]
