@@ -76,7 +76,7 @@ def regime_inference():
 
 
     if df.empty:
-        raise ValueError("No data from OpenAlgo.")
+        raise ValueError("No data from OpenAlgo. Ensure API key and symbol are correct.")
 
     # Normalize datetime
     df.columns = [c.lower() for c in df.columns]

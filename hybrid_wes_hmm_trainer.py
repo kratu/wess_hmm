@@ -26,10 +26,10 @@ Result:
     • Structurally stable across years
     • Sensitive to current market behaviour
 
-Version: 1.0
+Version: 1.0.1
 Author: Jeevan Jonas
 Date: 2024-06-15
-License: MIT License
+License: Apache, Version 2.0
 Copyright (c) 2024 Jeevan Jonas
 ───────────────────────────────────────────────────────────────────────────────
 """

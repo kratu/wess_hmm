@@ -11,7 +11,7 @@ import time
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from datetime import datetime
+from datetime import datetime, timedelta, time as dtime
 from pytz import timezone
 
 # --------------------------------------------------
@@ -27,20 +27,38 @@ import hybrid_regime_infer as infer  # ← use module namespace directly
 IST = timezone("Asia/Kolkata")
 client = api(api_key=API_KEY, host=API_HOST)
 SYMBOL = "NIFTY25NOV25FUT"
+now = datetime.now(IST)
 today = datetime.now(IST).strftime("%Y-%m-%d")
 
 print(f"\n[HYBRID DIAGNOSTICS] Fetching {SYMBOL} for {today}")
 
+
+# --- Hybrid Rule: Force 1m until 10:30, else 5m ---
+if now.time() < dtime(10,30):
+    timeframe = "1m"
+else:
+    timeframe = "5m"  # usually "5m"
+
+
 df = client.history(
     symbol=SYMBOL,
     exchange="NFO",
-    interval="5m",
+    interval=timeframe,
     start_date=today,
     end_date=today,
 )
 
-if df is None or df.empty:
-    raise ValueError("✕ No data returned from API.")
+# --- Handle API returning dict instead of DataFrame ---
+if isinstance(df, dict):
+    # Extract candle data safely
+    candles = df.get("data") or df.get("result", {}).get("data", [])
+    if not candles:
+        raise ValueError("No data from OpenAlgo. Ensure API key and symbol are correct.")
+    df = pd.DataFrame(candles)
+
+
+if df.empty:
+    raise ValueError("No data from OpenAlgo.")
 
 # --------------------------------------------------
 # DATA NORMALIZATION

@@ -6,10 +6,10 @@ Loads pre-trained Wasserstein & HMM models and applies them dynamically
 to new data (API or CSV). Usable as both a standalone diagnostic tool
 and an importable inference module for live trading logic.
 
-Version: 1.0
+Version: 1.0.1
 Author: Jeevan Jonas
 Date: 2024-06-15
-License: MIT License
+License: Apache, Version 2.0
 
 ------------------------------------------------
 """
