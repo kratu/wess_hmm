@@ -35,6 +35,9 @@ Intended Use:
 
 import hybrid_regime_infer as infer
 from datetime import datetime, timedelta, time as dtime
+import time
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.schedulers.base import SchedulerAlreadyRunningError
 import pandas as pd
 import numpy as np
 import sys
@@ -43,6 +46,8 @@ from pytz import timezone
 from config import API_KEY, API_HOST
 
 client = api(api_key=API_KEY, host=API_HOST)
+
+latest_regime = "Transitional" #Default initial regime
 
 SYMBOL = "NIFTY25NOV25FUT"
 IST = timezone("Asia/Kolkata")
@@ -77,7 +82,7 @@ def regime_inference():
     # --- Empty or invalid data guard ---
     if df is None or df.empty:
         print(f"[Hybrid] Empty dataset for {SYMBOL} — exiting gracefully.")
-        sys.exit(0)
+        return  # exit gracefully, scheduler will retry on next cycle
 
     # Normalize datetime
     df.columns = [c.lower() for c in df.columns]
@@ -124,9 +129,97 @@ def regime_inference():
         s = start.strftime("%H:%M")
         e = end.strftime("%H:%M")
         print(f"{s}–{e} – {label}")
-        print(f"{s}–{e} – {label}")
     print("⎯" * 100)
     latest_regime = df["RegimeLabel"].iloc[-1]
 
+
+
+# CORE STRATEGY ---------------------------------------------------------------------------------
+
+def core_step():
+    """
+    Core step function to be scheduled periodically.
+    """
+    global latest_regime
+
+    print(f"\n[Hybrid Regime Inference] Running core step at {datetime.now(IST).strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"\nLatest regime: {latest_regime}")
+    print("⎯" * 100)
+
+    if latest_regime == "Trending":
+        msg = "Regime : Trending → proceed with trend strategy"
+        print(msg) 
+      
+    elif latest_regime == "Transitional":
+        msg = "Regime : Transitional → halt "
+        print(msg)
+        #return
+    
+    elif latest_regime in ("Range", "Mild-Uptrend"):
+        msg = "Regime : Range/Mild-Uptrend → proceeding with range strategy"
+        print(msg) 
+
+    elif latest_regime == "Choppy":
+        msg = "Regime : Choppy → skip / hold "
+        print(msg)
+        return 
+    
+    else:
+        msg = "Unknown regime label."
+        print(msg)
+        return
+
+    print("⎯" * 100)
+
+
+# Note: concurrent job updates may require a threading.Lock in live use
+# Run regime inference every 5 minutes
+# Core step executes every 30 seconds using latest regime state
+
+ 
+# SETUP SCHEDULER ---------------------------------------------------------------------------------
+def setup_scheduler(scheduler):
+    """
+    Configures jobs with optimized intervals, misfire grace, and logging.
+    """
+
+    scheduler.add_job(
+        core_step,
+        trigger='interval',
+        seconds=30,
+        id='trend_step',
+        max_instances=1,
+        replace_existing=True,
+        coalesce=True,
+        misfire_grace_time=5
+    )
+
+    # Monitor structure: every 5 seconds
+    scheduler.add_job(
+        regime_inference,
+        trigger='interval',
+        seconds=300, #run every 5 minutes 
+        id='regime_inference',
+        replace_existing=True
+    )
+    print("⚙ Scheduler configured")
+
 if __name__ == "__main__":
-    regime_inference()
+   
+    scheduler = BackgroundScheduler(timezone=IST)
+    setup_scheduler(scheduler)
+
+    from apscheduler.jobstores.base import JobLookupError
+    try:
+        scheduler.start()
+    except SchedulerAlreadyRunningError:
+        print("Scheduler already running; continuing.")
+
+
+    try:
+        print("OpenAlgo Python Bot is running.")
+        while True:
+            time.sleep(1)
+    except (KeyboardInterrupt, SystemExit):
+        print("◘ Signal received. Initiating shutdown...")
+        sys.exit(0)

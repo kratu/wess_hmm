@@ -25,16 +25,111 @@ It is designed for **real-time regime detection** and **quantitative market stru
 
 ---
 
+
+### **Core Concept**
+
+The hybrid model combines two complementary inference layers:
+
+1. **HMM Layer (Temporal Probabilistic Inference):**
+   Learns transition probabilities between hidden regimes (using GaussianHMM). Captures sequential dependencies — how likely the market is to stay or switch regimes.
+
+2. **Wasserstein Layer (Distributional Geometry):**
+   Clusters normalized market features (returns, volatility, momentum) using Wasserstein distance — a geometry-aware metric sensitive to the *shape* of price distributions.
+   It provides *structural validation* — whether a current feature distribution aligns with known regime archetypes.
+
+3. **Hybrid Integration Logic:**
+
+   * Posterior probabilities from the HMM are weighted by Wasserstein proximity scores.
+   * Confidence (`max(p)`) and entropy (`-∑p log p`) metrics are computed to gauge decisiveness.
+   * Final regime labels are assigned through a gating logic:
+
+     * If Wasserstein and HMM disagree, confidence or entropy thresholds decide.
+     * Transitional states are recognized where entropy is high and distance scores conflict.
+
+---
+
+### **Trainer Module (Offline Phase)**
+
+* Input features: momentum, volatility ratio, ATR-based normalization, rolling returns.
+* StandardScaler normalization.
+* Separate unsupervised training:
+
+  * `GaussianHMM(n_components=3–4)` for temporal pattern learning.
+  * `WassersteinClusterer(n_clusters=3–4)` for geometric clustering.
+* Model artifacts stored via `joblib`:
+
+  * `regime_hmm.pkl`
+  * `regime_wasserstein.pkl`
+  * `regime_scaler.pkl`
+
+---
+
+### **Inference Module (Online Phase)**
+
+* Loads pretrained models once (`load_models_once()`).
+* Fetches live data from OpenAlgo API (1m until 10:30, then 5m).
+* Scales input features and computes:
+
+  * HMM posterior probabilities
+  * Wasserstein cluster distances
+  * Confidence + entropy diagnostics
+* Labels regimes dynamically and visualizes regime segments (e.g., 09:15–09:55 Uptrend).
+
+---
+
+### **Key Output Example**
+
+```
+✦✱▴ Regime Segments:
+09:15–09:55 – Uptrend
+10:00–10:30 – Transitional
+11:10–15:25 – Uptrend
+
+Regime Distribution:
+Uptrend         0.813
+Choppy          0.107
+Transitional    0.080
+```
+
+---
+
+### **Strengths**
+
+* Merges **temporal memory** (HMM) with **distributional geometry** (Wasserstein).
+* More stable than pure HMM during structural breaks or volatile transitions.
+* Better generalization to unseen market behavior.
+* Provides interpretable diagnostics (confidence, entropy).
+
+### **Weaknesses**
+
+* Requires consistent feature scaling and windowed retraining.
+* Sensitive to drift — Wasserstein clusters may need periodic recalibration.
+* Increased compute vs standalone models.
+
+### **Why It Works Better**
+
+The hybrid approach brings the *best of both worlds* —
+**HMM** captures the *when*, **Wasserstein** captures the *what*.
+Together they yield a regime map that is both *temporally coherent* and *geometrically accurate*.
+
+---
+
+
 ## **Repository Overview**
 
 | File / Module                             | Description                                                                                                                           |
 | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
 | **`hybrid_regime_infer.py`** | Core inference engine combining Wasserstein clustering and Gaussian HMM logic. Includes lazy model loading and multi-scale smoothing. |
-| **`run_inference_plot.py`**               | Diagnostic runner and visualizer. Fetches recent data, runs full inference, and plots regime labels.                                  |
+| **`hybrid_wes_hmm_trainer.py`** | Training module |
+| **`inference_plotter.py`**               | Diagnostic runner and visualizer. Fetches recent data, runs full inference, and plots regime labels.                                  |
+| **`usage_example.py`**               | Diagnostic runner and visualizer. Fetches recent data, runs full inference, and plots regime labels.                                  |
 | **`config.py`**                           | Stores API credentials and server details. Replace `YOUR_API_KEY` with your actual OpenAlgo key before running.                       |
 | **`data/`**                              | Contains pre-trained `.pkl` model files — HMM, Wasserstein centroids, and StandardScaler.                                             |
 | **`LICENSE`**                             | Legal license (MIT or CC BY-NC-SA 4.0).                                                                                               |
 | **`README.md`**                           | This documentation.                                                                                                                   |
+| **`Hybrid_Wasserstein_HMM_Regime_Detection.pdf`**                           | Research Paper on the methodology         |
+
+
 
 ---
 
@@ -62,23 +157,6 @@ It is designed for **real-time regime detection** and **quantitative market stru
 
 ---
 
-## **Example Output**
-
-```
-Regime Segments:
-09:15–09:55 – Trending
-10:00–10:05 – Transitional
-10:10–10:25 – Choppy
-10:30–11:05 – Transitional
-11:10–11:35 – Trending
-
-Regime Distribution:
-Trending        0.469
-Transitional    0.312
-Choppy          0.219
-```
-
----
 
 ## **Installation**
 
