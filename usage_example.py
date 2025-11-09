@@ -47,7 +47,7 @@ from config import API_KEY, API_HOST
 
 client = api(api_key=API_KEY, host=API_HOST)
 
-latest_regime = "Transitional" #Default initial regime
+latest_regime = "Unknown" #Default initial regime
 
 SYMBOL = "NIFTY25NOV25FUT"
 IST = timezone("Asia/Kolkata")
@@ -75,7 +75,7 @@ def regime_inference():
     if isinstance(df, dict):
         candles = df.get("data") or df.get("result", {}).get("data", [])
         if not candles:
-            print(f"[Hybrid] No data from OpenAlgo. Ensure API_KEY is edited and SYMBOL are correct.")
+            print(f"[Hybrid] No data from OpenAlgo. Ensure API_KEY is edited and SYMBOL is valid.")
             sys.exit(0)
         df = pd.DataFrame(candles)
 
@@ -205,9 +205,13 @@ def setup_scheduler(scheduler):
     print("⚙ Scheduler configured")
 
 if __name__ == "__main__":
-   
+    print("⚙ Initializing Hybrid Regime Inference Scheduler...")
+    print("⎯" * 100)
+    print("\n⎯  Change API_KEY and update SYMBOL if outdated ⎯ \n")
     scheduler = BackgroundScheduler(timezone=IST)
     setup_scheduler(scheduler)
+
+    regime_inference() #Initial run
 
     from apscheduler.jobstores.base import JobLookupError
     try:

@@ -127,7 +127,7 @@ Together they yield a regime map that is both *temporally coherent* and *geometr
 | **`data/`**                              | Contains pre-trained `.pkl` model files — HMM, Wasserstein centroids, and StandardScaler.                                             |
 | **`LICENSE`**                             | Legal license (MIT or CC BY-NC-SA 4.0).                                                                                               |
 | **`README.md`**                           | This documentation.                                                                                                                   |
-| **`Hybrid_Wasserstein_HMM_Regime_Detection.pdf`**                           | Research Paper on the methodology         |
+| **`Hybrid_Wasserstein_HMM_Regime_Detection.pdf`**                           | Paper describing the workings of the methodology         |
 
 
 
