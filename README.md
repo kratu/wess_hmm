@@ -173,7 +173,7 @@ pip install -r requirements.txt
 
 All runtime settings are stored in `config.py`:
 
-For running integration_example.py replace this your OpenAlgo API_KEY
+For running usage_example.py replace this your OpenAlgo API_KEY
 
 ```python
 API_KEY  = os.getenv("OPENALGO_API_KEY", "YOUR_API_KEY")
@@ -187,7 +187,7 @@ API_HOST = os.getenv("OPENALGO_API_HOST", "http://127.0.0.1:5000")
 ### **1. Run the Diagnostic Inference**
 
 ```bash
-python run_inference.py
+python inference_plotter.py
 ```
 
 This script:
