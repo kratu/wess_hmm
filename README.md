@@ -125,7 +125,7 @@ Together they yield a regime map that is both *temporally coherent* and *geometr
 | **`usage_example.py`**               | Diagnostic runner and visualizer. Fetches recent data, runs full inference, and plots regime labels.                                  |
 | **`config.py`**                           | Stores API credentials and server details. Replace `YOUR_API_KEY` with your actual OpenAlgo key before running.                       |
 | **`data/`**                              | Contains pre-trained `.pkl` model files — HMM, Wasserstein centroids, and StandardScaler.                                             |
-| **`LICENSE`**                             | Legal license (MIT or CC BY-NC-SA 4.0).                                                                                               |
+| **`LICENSE`**                             | Legal license (Apache V2.0).                                                                                               |
 | **`README.md`**                           | This documentation.                                                                                                                   |
 | **`Hybrid_Wasserstein_HMM_Regime_Detection.pdf`**                           | Paper describing the workings of the methodology         |
 
@@ -201,7 +201,7 @@ This script:
 
 ### **2. Integrate Into Trading Logic**
 
-A complete example is provided in **`integration_example.py`**.
+A complete example is provided in **`usage_example.py`**.
 It demonstrates:
 
 * Fetching 5-minute intraday data
@@ -212,7 +212,7 @@ It demonstrates:
 
 ---
 
-## **Future Improvements**
+## **Ongoing Refinement / Future Improvements**
 
 * Retrain using expanded historical data (2008–2025)
 * Improve evaluation accuracy for Range and Choppy
@@ -247,13 +247,6 @@ Users are responsible for verifying correctness, suitability, and regulatory com
 
 ---
 
-## **License**
-
-Apache License, Version 2.0
-You are free to use, modify, and distribute the code with attribution.
-
----
-
 ## **Citation**
 
 If you use this framework:
@@ -266,7 +259,7 @@ If you use this framework:
 ## **Author & License**
 
 Developed by **Jeevan Jonas**
-Visual Artist · UX Designer · Algorithmic Trader
+Artist · UX  · Quant Designer
 
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 

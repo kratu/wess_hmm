@@ -28,7 +28,22 @@ IST = timezone("Asia/Kolkata")
 client = api(api_key=API_KEY, host=API_HOST)
 SYMBOL = "NIFTY25NOV25FUT"
 now = datetime.now(IST)
-today = datetime.now(IST).strftime("%Y-%m-%d")
+#today = datetime.now(IST).strftime("%Y-%m-%d")
+
+#--------------------------------------------------
+# TEST DATE CONFIG
+# --------------------------------------------------
+# Toggle between fixed test date and today's date
+USE_FIXED_DATE = True          # set to False for live runs
+DAYS_AGO = 8                   # how many days back for testing
+
+if USE_FIXED_DATE:
+    test_date = (now - timedelta(days=DAYS_AGO))
+    today = test_date.strftime("%Y-%m-%d")
+    print(f"[TEST MODE] Using fixed date → {today}")
+else:
+    today = now.strftime("%Y-%m-%d")
+    print(f"[LIVE MODE] Using today's date → {today}")
 
 print(f"\n[HYBRID DIAGNOSTICS] Fetching {SYMBOL} for {today}")
 
@@ -187,11 +202,11 @@ plt.grid(ls="--", alpha=0.3)
 plt.tight_layout()
 plt.show()
 
-# Wasserstein context plot
-plt.figure(figsize=(10, 3.5))
-plt.scatter(range(len(wlabels)), wlabels, s=10, c=wlabels, cmap="viridis")
-plt.title("Wasserstein Cluster Contexts (0=Trend, 1=Range, 2=Choppy)")
-plt.xlabel("Bars")
-plt.ylabel("Cluster ID")
-plt.tight_layout()
-plt.show()
+# # Wasserstein context plot
+# plt.figure(figsize=(10, 3.5))
+# plt.scatter(range(len(wlabels)), wlabels, s=10, c=wlabels, cmap="viridis")
+# plt.title("Wasserstein Cluster Contexts (0=Trend, 1=Range, 2=Choppy)")
+# plt.xlabel("Bars")
+# plt.ylabel("Cluster ID")
+# plt.tight_layout()
+# plt.show()

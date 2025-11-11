@@ -194,7 +194,6 @@ def setup_scheduler(scheduler):
         misfire_grace_time=5
     )
 
-    # Monitor structure: every 5 seconds
     scheduler.add_job(
         regime_inference,
         trigger='interval',
