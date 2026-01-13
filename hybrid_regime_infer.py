@@ -232,12 +232,16 @@ def infer_regime_multiscale(X_scaled, df_index, model, governor, clusterer, wlab
         # High-confidence directional override:
         # if model says choppy/range but structure screams "trend", flip it.
         if final_label in ("Choppy", "Range", "Transitional") and is_trend_override():
-            final_label = "Trending" if slope_z >= 0 else "Trending-Down"
+            final_label = "Trending-Up" if slope_z >= 0 else "Trending-Down"
 
-        # Optional: if you want symmetric explicit up label too:
-        if final_label == "Trending" and slope_z < 0:
-            # only if you really want the label explicit
-            final_label = "Trending-Down"
+        # # Optional: if you want symmetric explicit up label too:
+        # if final_label == "Trending" and slope_z < 0:
+        #     # only if you really want the label explicit
+        #     final_label = "Trending-Down"
+
+        # Explicit direction labeling (Option A core change)
+        if final_label == "Trending":
+            final_label = "Trending-Up"
             
         final_labels.append(final_label)
     return final_labels

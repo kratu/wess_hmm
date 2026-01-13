@@ -195,13 +195,13 @@ print(dominant.head(3))
 # VISUALIZATION
 # --------------------------------------------------
 colors = {
-    "Trending": "green",
+    "Trending-Up": "green",
     "Trending-Down": "red",
     "Mild-Uptrend": "lime",
     "Mild-Downtrend": "orange",
     "Range": "gold",
     "Choppy": "gray",
-    "Transitional": "gray",
+    "Transitional": "yellow",
 }
 
 # VWAP overlay
