@@ -48,9 +48,12 @@ from config import API_KEY, API_HOST
 client = api(api_key=API_KEY, host=API_HOST)
 
 latest_regime = "Unknown" #Default initial regime
+# Persistent regime governor (IMPORTANT)
+regime_governor = infer.RegimeGovernor(min_hold=infer.MIN_HOLD_MIN)
 
-SYMBOL = "NIFTY25NOV25FUT"
+SYMBOL = "NIFTY27JAN26FUT"
 IST = timezone("Asia/Kolkata")
+TIMEFRAME = "5m"
 
 def regime_inference():
     global latest_regime
@@ -58,16 +61,10 @@ def regime_inference():
     now = datetime.now(IST)
     today = datetime.now(IST).strftime("%Y-%m-%d")
 
-    # --- Hybrid Rule: Force 1m until 10:30, else 5m ---
-    if now.time() < dtime(10,30):
-        timeframe = "1m"
-    else:
-        timeframe = "5m"  # usually "5m"
-
     df = client.history(
         symbol=SYMBOL,
         exchange="NFO",
-        interval=timeframe,
+        interval=TIMEFRAME,
         start_date=today,
         end_date=today
     )
@@ -102,7 +99,7 @@ def regime_inference():
     features = infer.compute_features(df)
 
     if features is None or len(features) < 10:
-        print(f"[RegimeGuard] Not enough bars yet ({len(df)}). Waiting for more data.")
+        print(f"[RegimeGuard] Early market hours and not enough bars yet ({len(df)}). Waiting for more data. Check from 10:30 AM IST onwards.")
         return  # exit gracefully, scheduler will retry on next cycle
 
     features = features.reindex(df.index).dropna()
@@ -116,7 +113,7 @@ def regime_inference():
 
     gov = infer.RegimeGovernor(min_hold=infer.MIN_HOLD_MIN)
     df["RegimeLabel"] = infer.infer_regime_multiscale(
-        X_scaled, df.index, infer.hmmf, gov, infer.clusterer, wlabels
+        X_scaled, df.index, infer.hmmf, regime_governor, infer.clusterer, wlabels
     )
 
     # --------------------------------------------------
@@ -146,26 +143,34 @@ def core_step():
     print(f"\nLatest regime: {latest_regime}")
     print("⎯" * 100)
 
-    if latest_regime == "Trending":
-        msg = "Regime : Trending → proceed with trend strategy"
-        print(msg) 
-      
-    elif latest_regime == "Transitional":
-        msg = "Regime : Transitional → halt "
+    # ---- TREND REGIMES (direction-agnostic at gate level) ----
+    if latest_regime in ("Trending", "Trending-Down"):
+        msg = f"Regime : {latest_regime} → proceed with trend strategy"
         print(msg)
-        #return
-    
-    elif latest_regime in ("Range", "Mild-Uptrend"):
-        msg = "Regime : Range/Mild-Uptrend → proceeding with range strategy"
-        print(msg) 
+        # trend_strategy(direction="down" if latest_regime.endswith("Down") else "up")
+        return
 
-    elif latest_regime == "Choppy":
-        msg = "Regime : Choppy → skip / hold "
+    # ---- TRANSITIONAL (explicit block) ----
+    elif latest_regime == "Transitional":
+        msg = "Regime : Transitional → halt (no new risk)"
         print(msg)
-        return 
-    
+        return
+
+    # ---- RANGE / MILD TREND ----
+    elif latest_regime in ("Range", "Mild-Uptrend", "Mild-Downtrend"):
+        msg = f"Regime : {latest_regime} → proceed with range / mean-reversion strategy"
+        print(msg)
+        return
+
+    # ---- CHOPPY ----
+    elif latest_regime == "Choppy":
+        msg = "Regime : Choppy → skip / hold"
+        print(msg)
+        return
+
+    # ---- FALLBACK ----
     else:
-        msg = "Unknown regime label."
+        msg = f"Unknown regime label: {latest_regime} → default hold"
         print(msg)
         return
 

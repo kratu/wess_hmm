@@ -33,6 +33,12 @@ MODEL_FILE_WASS = os.path.join(DATA_DIR, "regime_wasserstein.pkl")
 SCALER_FILE     = os.path.join(DATA_DIR, "regime_scaler.pkl")
 STATE_TO_LABEL  = {0: "Trending", 1: "Range", 2: "Choppy"}
 
+# Directional trend override thresholds (tune with replay)
+TREND_SLOPE_Z_THR = 0.55     # abs(z-slope)
+TREND_R2_Z_THR    = 0.10     # z-r2 (scaled); keep low, rely on combo
+TREND_ADX_Z_THR   = -0.10    # allow mild ADX; adjust if too permissive
+
+
 MIN_HOLD_MIN    = 20
 IST = timezone("Asia/Kolkata")
 
@@ -200,9 +206,16 @@ def infer_regime_multiscale(X_scaled, df_index, model, governor, clusterer, wlab
         local = [regimes_by_window[w][i] for w in windows]
         hmm_label = governor.decide_multiscale(local, df_index[i])
         wlab = wlabels[i]
+        slope_z = float(X_scaled[i, 1])
+        r2_z    = float(X_scaled[i, 2])
+        adx_z   = float(X_scaled[i, 3])
+
+        def is_trend_override():
+            return (abs(slope_z) >= TREND_SLOPE_Z_THR) and (r2_z >= TREND_R2_Z_THR) and (adx_z >= TREND_ADX_Z_THR)
+        
         if wlab is not None:
             if hmm_label == "Range" and wlab == 0:
-                final_label = "Mild-Uptrend"
+                final_label = "Mild-Uptrend" if slope_z >= 0 else "Mild-Downtrend"
             elif hmm_label == "Trending" and wlab == 2:
                 final_label = "Transitional"
             elif hmm_label == "Choppy" and wlab == 1:
@@ -215,6 +228,17 @@ def infer_regime_multiscale(X_scaled, df_index, model, governor, clusterer, wlab
             final_label = "Range"
         elif final_label == "Transitional" and wlab == 2:
             final_label = "Choppy"
+        
+        # High-confidence directional override:
+        # if model says choppy/range but structure screams "trend", flip it.
+        if final_label in ("Choppy", "Range", "Transitional") and is_trend_override():
+            final_label = "Trending" if slope_z >= 0 else "Trending-Down"
+
+        # Optional: if you want symmetric explicit up label too:
+        if final_label == "Trending" and slope_z < 0:
+            # only if you really want the label explicit
+            final_label = "Trending-Down"
+            
         final_labels.append(final_label)
     return final_labels
 

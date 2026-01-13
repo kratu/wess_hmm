@@ -26,7 +26,8 @@ import hybrid_regime_infer as infer  # ← use module namespace directly
 # --------------------------------------------------
 IST = timezone("Asia/Kolkata")
 client = api(api_key=API_KEY, host=API_HOST)
-SYMBOL = "NIFTY25NOV25FUT"
+SYMBOL = "NIFTY27JAN26FUT"
+TIMEFRAME = "5m"
 now = datetime.now(IST)
 #today = datetime.now(IST).strftime("%Y-%m-%d")
 
@@ -35,7 +36,7 @@ now = datetime.now(IST)
 # --------------------------------------------------
 # Toggle between fixed test date and today's date
 USE_FIXED_DATE = True          # set to False for live runs
-DAYS_AGO = 8                   # how many days back for testing
+DAYS_AGO = 2                   # how many days back for testing
 
 if USE_FIXED_DATE:
     test_date = (now - timedelta(days=DAYS_AGO))
@@ -48,17 +49,10 @@ else:
 print(f"\n[HYBRID DIAGNOSTICS] Fetching {SYMBOL} for {today}")
 
 
-# --- Hybrid Rule: Force 1m until 10:30, else 5m ---
-if now.time() < dtime(10,30):
-    timeframe = "1m"
-else:
-    timeframe = "5m"  # usually "5m"
-
-
 df = client.history(
     symbol=SYMBOL,
     exchange="NFO",
-    interval=timeframe,
+    interval=TIMEFRAME,
     start_date=today,
     end_date=today,
 )
@@ -71,23 +65,44 @@ df = client.history(
 #         raise ValueError("No data from OpenAlgo. Ensure API key and symbol are correct.")
 #     df = pd.DataFrame(candles)
 
+if df is None:
+    raise RuntimeError(
+        f"No data from Open Algo({len(df)} possibly a market holiday)."
+    )
 
-# if df.empty:
-#     raise ValueError("No data from OpenAlgo.")
+# If API returned dict, extract candles
+if isinstance(df, dict):
+    candles = df.get("data") or df.get("result", {}).get("data", [])
 
+    if not candles:
+        raise RuntimeError(
+            f"No data from OpenAlgo (0 candles) — possibly a market holiday."
+        )
+
+    df = pd.DataFrame(candles)
+
+
+elif len(df) > 0 and len(df) < 10:
+    raise RuntimeError(
+        f"[Hybrid] Insufficient raw bars for regime inference "
+        f"({len(df)} bars). Likely early market hours."
+    )
 
 # --- Handle API returning dict instead of DataFrame ---
 if isinstance(df, dict):
     candles = df.get("data") or df.get("result", {}).get("data", [])
     if not candles:
         print(f"[Hybrid] No data from OpenAlgo. Ensure API_KEY is edited and SYMBOL are correct.")
-        sys.exit(0)
+        raise RuntimeError(
+        "[Hybrid] No data from OpenAlgo. Check API_KEY, SYMBOL are correct."
+    )
     df = pd.DataFrame(candles)
 
 # --- Empty or invalid data guard ---
 if df is None or df.empty:
     print(f"[Hybrid] Empty dataset for {SYMBOL} — exiting gracefully.")
-    sys.exit(0)
+    raise RuntimeError(f"[Hybrid] Empty dataset for {SYMBOL}.")
+    #sys.exit(0)
 
 # --------------------------------------------------
 # DATA NORMALIZATION
@@ -170,9 +185,11 @@ print(dominant.head(3))
 # --------------------------------------------------
 colors = {
     "Trending": "green",
+    "Trending-Down": "red",
     "Mild-Uptrend": "lime",
+    "Mild-Downtrend": "orange",
     "Range": "gold",
-    "Choppy": "red",
+    "Choppy": "gray",
     "Transitional": "gray",
 }
 

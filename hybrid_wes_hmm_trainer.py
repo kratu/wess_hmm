@@ -78,7 +78,7 @@ def compute_features(df):
     Matches inference version exactly.
     """
     df["return"] = np.log(df["close"] / df["close"].shift(1))
-    df["adx"] = talib.ADX(df["high"], df["low"], df["close"], 14)
+    df["adx"] = talib.ADX(df["high"], df["low"], df["close"], 7)
     df["atr"] = talib.ATR(df["high"], df["low"], df["close"], 14)
     df["range_ratio"] = (df["high"] - df["low"]) / df["close"]
 
@@ -104,9 +104,9 @@ def compute_features(df):
 
 
     # --- Trend Amplification (moderate) ---
-    df["slope"] *= 1.6
-    df["r2"]    *= 1.2
-    df["adx"]   *= 1.4
+    df["slope"] *= 2.0
+    df["r2"]    *= 1.3
+    df["adx"]   *= 1.6
 
     df.fillna(method="bfill", inplace=True)
     df.fillna(method="ffill", inplace=True)
