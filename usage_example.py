@@ -53,7 +53,7 @@ regime_governor = infer.RegimeGovernor(min_hold=infer.MIN_HOLD_MIN)
 
 SYMBOL = "NIFTY27JAN26FUT"
 IST = timezone("Asia/Kolkata")
-TIMEFRAME = "5m"
+TIMEFRAME = "1m"
 
 def regime_inference():
     global latest_regime
@@ -61,10 +61,16 @@ def regime_inference():
     now = datetime.now(IST)
     today = datetime.now(IST).strftime("%Y-%m-%d")
 
+    # --- Hybrid Rule: Force 1m until 10:30, else 5m ---
+    if now.time() < dtime(10,30):
+        timeframe = "1m"
+    else:
+        timeframe = TIMEFRAME  # usually "5m"
+
     df = client.history(
         symbol=SYMBOL,
         exchange="NFO",
-        interval=TIMEFRAME,
+        interval=timeframe,
         start_date=today,
         end_date=today
     )
@@ -169,7 +175,7 @@ def core_step():
         return
 
     # ---- FALLBACK ----
-    else:
+    elif latest_regime == "Unknown":
         msg = f"Unknown regime label: {latest_regime} → default hold"
         print(msg)
         return

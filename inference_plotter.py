@@ -27,7 +27,7 @@ import hybrid_regime_infer as infer  # ← use module namespace directly
 IST = timezone("Asia/Kolkata")
 client = api(api_key=API_KEY, host=API_HOST)
 SYMBOL = "NIFTY27JAN26FUT"
-TIMEFRAME = "5m"
+TIMEFRAME = "1m"
 now = datetime.now(IST)
 #today = datetime.now(IST).strftime("%Y-%m-%d")
 
@@ -35,8 +35,8 @@ now = datetime.now(IST)
 # TEST DATE CONFIG
 # --------------------------------------------------
 # Toggle between fixed test date and today's date
-USE_FIXED_DATE = True          # set to False for live runs
-DAYS_AGO = 2                   # how many days back for testing
+USE_FIXED_DATE = False          # set to False for live runs
+DAYS_AGO = 0                   # how many days back for testing
 
 if USE_FIXED_DATE:
     test_date = (now - timedelta(days=DAYS_AGO))
@@ -48,11 +48,16 @@ else:
 
 print(f"\n[HYBRID DIAGNOSTICS] Fetching {SYMBOL} for {today}")
 
+# --- Hybrid Rule: Force 1m until 10:30, else 5m ---
+if now.time() < dtime(10,30):
+    timeframe = "1m"
+else:
+    timeframe = TIMEFRAME  # usually "5m"
 
 df = client.history(
     symbol=SYMBOL,
     exchange="NFO",
-    interval=TIMEFRAME,
+    interval=timeframe,
     start_date=today,
     end_date=today,
 )
@@ -140,6 +145,12 @@ assert infer.hmmf is not None, "HMM model not loaded — check model paths."
 features = infer.compute_features(df)
 features = features.reindex(df.index).dropna()
 df = df.loc[features.index]  # align both
+
+if len(features) < 20:
+    raise RuntimeError(
+        f"[Hybrid] Only {len(features)} usable feature rows after indicator warm-up. "
+        "Indicators not fully initialized yet."
+    )
 
 X_scaled = np.clip(infer.scaler.transform(features), -3, 3)
 
