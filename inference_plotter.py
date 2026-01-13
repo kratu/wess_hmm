@@ -27,7 +27,7 @@ import hybrid_regime_infer as infer  # ← use module namespace directly
 IST = timezone("Asia/Kolkata")
 client = api(api_key=API_KEY, host=API_HOST)
 SYMBOL = "NIFTY27JAN26FUT"
-TIMEFRAME = "1m"
+TIMEFRAME = "5m"
 now = datetime.now(IST)
 #today = datetime.now(IST).strftime("%Y-%m-%d")
 

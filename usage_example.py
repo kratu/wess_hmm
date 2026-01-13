@@ -53,7 +53,7 @@ regime_governor = infer.RegimeGovernor(min_hold=infer.MIN_HOLD_MIN)
 
 SYMBOL = "NIFTY27JAN26FUT"
 IST = timezone("Asia/Kolkata")
-TIMEFRAME = "1m"
+TIMEFRAME = "5m"
 
 def regime_inference():
     global latest_regime
