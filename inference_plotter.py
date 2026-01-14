@@ -36,7 +36,7 @@ now = datetime.now(IST)
 # --------------------------------------------------
 # Toggle between fixed test date and today's date
 USE_FIXED_DATE = False          # set to False for live runs
-DAYS_AGO = 0                   # how many days back for testing
+DAYS_AGO = 7                   # how many days back for testing
 
 if USE_FIXED_DATE:
     test_date = (now - timedelta(days=DAYS_AGO))
@@ -48,16 +48,15 @@ else:
 
 print(f"\n[HYBRID DIAGNOSTICS] Fetching {SYMBOL} for {today}")
 
-# --- Hybrid Rule: Force 1m until 10:30, else 5m ---
-if now.time() < dtime(10,30):
-    timeframe = "1m"
-else:
-    timeframe = TIMEFRAME  # usually "5m"
+
+if not USE_FIXED_DATE and now.time() < dtime(10,10):
+    print("Inference works best after 10:10AM, please check later")
+    
 
 df = client.history(
     symbol=SYMBOL,
     exchange="NFO",
-    interval=timeframe,
+    interval=TIMEFRAME,
     start_date=today,
     end_date=today,
 )
@@ -173,6 +172,29 @@ df["RegimeLabel"] = infer.infer_regime_multiscale(
 
 print(f"✔︎ Inference complete in {time.time() - t0:.2f}s")
 
+
+def format_regime(reg):
+    """
+    Human-friendly representation of regime state.
+    """
+    if hasattr(reg, "cls"):
+        if reg.cls == "Trending":
+            return f"Trending-{reg.direction}"
+        return reg.cls
+    return str(reg)
+
+
+def regime_to_label(reg):
+    """
+    Convert RegimeState or legacy string into a display-safe label.
+    """
+    if hasattr(reg, "cls"):
+        if reg.cls == "Trending":
+            return "Trending-Up" if reg.direction == "Up" else "Trending-Down"
+        return reg.cls
+    return reg
+
+
 # --------------------------------------------------
 # SEGMENT SUMMARY
 # --------------------------------------------------
@@ -181,7 +203,7 @@ print("\n✦ Regime Segments:")
 for start, end, label in segments:
     s = start.strftime("%H:%M")
     e = end.strftime("%H:%M")
-    print(f"{s}–{e} – {label}")
+    print(f"{s}–{e} – {format_regime(label)}")
 
 print("\n✲ Regime Distribution:")
 print(df["RegimeLabel"].value_counts(normalize=True).round(3))
@@ -204,6 +226,7 @@ colors = {
     "Transitional": "yellow",
 }
 
+
 # VWAP overlay
 df["vwap"] = (
     (df["volume"] * (df["high"] + df["low"] + df["close"]) / 3).cumsum()
@@ -215,14 +238,34 @@ plt.plot(df.index, df["close"], color="black", lw=1, alpha=0.6, label="Close")
 plt.plot(df.index, df["vwap"], "--", lw=1.2, color="gray", alpha=0.8, label="VWAP")
 
 # Regime scatter overlay
+# Regime scatter overlay
+df["_reg_label"] = df["RegimeLabel"].apply(regime_to_label)
+
+used_labels = set()   # MUST be a set
+
 for reg, c in colors.items():
-    subset = df[df["RegimeLabel"] == reg]
-    if not subset.empty:
-        plt.scatter(subset.index, subset["close"], s=14, c=c, label=reg, alpha=0.85)
+    subset = df[df["_reg_label"] == reg]
+    if subset.empty:
+        continue
+
+    label = reg if reg not in used_labels else None
+
+    plt.scatter(
+        subset.index,
+        subset["close"],
+        s=14,
+        c=c,
+        label=label,
+        alpha=0.85,
+    )
+
+    used_labels.add(reg)
 
 # Subtle background spans for segment visibility
 for start, end, label in segments:
-    plt.axvspan(start, end, color=colors.get(label, "gray"), alpha=0.05)
+    lbl = regime_to_label(label)
+    plt.axvspan(start, end, color=colors.get(lbl, "gray"), alpha=0.05)
+
 
 plt.legend(loc="upper left")
 plt.title(f"Hybrid Regime Inference — {today}", fontsize=13)

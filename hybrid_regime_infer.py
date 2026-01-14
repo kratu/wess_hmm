@@ -46,6 +46,19 @@ IST = timezone("Asia/Kolkata")
 _models_loaded = False
 hmmf = clusterer = scaler = None
 
+# --- Experimental: explicit regime state (Option B)
+ENABLE_STRUCTURED_REGIME = True  # DO NOT ENABLE until inference is frozen
+
+
+from dataclasses import dataclass
+from typing import Literal, Optional
+
+@dataclass
+class RegimeState:
+    cls: Literal["Trending", "Range", "Choppy", "Transitional"]
+    direction: Literal["Up", "Down", "Neutral"]
+    confidence: Optional[float] = None  # placeholder for future use
+
 
 # --------------------------------------------------
 # MODEL LOADER
@@ -179,9 +192,9 @@ def summarize_regime_periods(df, label_col="RegimeLabel"):
     return segs
 
 
-# --------------------------------------------------
+
 # MULTI-SCALE INFERENCE
-# --------------------------------------------------
+
 def infer_regime_multiscale(X_scaled, df_index, model, governor, clusterer, wlabels, alpha=0.65):
     windows = [6, 12, 24]
     post_smooth = np.zeros((len(X_scaled), model.n_components))
@@ -244,6 +257,38 @@ def infer_regime_multiscale(X_scaled, df_index, model, governor, clusterer, wlab
             final_label = "Trending-Up"
             
         final_labels.append(final_label)
+
+    """
+    NOTE:
+    Option B introduces explicit (class, direction, confidence) regime states.
+    This is intentionally disabled until regime inference logic stabilizes.
+    Do NOT enable while tuning thresholds or governor behavior.
+    """
+
+    # --------------------------------------------------
+    # Option B scaffold (DISABLED)
+    # --------------------------------------------------
+    if ENABLE_STRUCTURED_REGIME:
+        structured_states = []
+
+        for label in final_labels:
+            if label == "Trending-Up":
+                state = RegimeState("Trending", "Up")
+            elif label == "Trending-Down":
+                state = RegimeState("Trending", "Down")
+            elif label == "Mild-Uptrend":
+                state = RegimeState("Range", "Up")
+            elif label == "Mild-Downtrend":
+                state = RegimeState("Range", "Down")
+            elif label in ("Range", "Choppy", "Transitional"):
+                state = RegimeState(label, "Neutral")
+            else:
+                state = RegimeState("Transitional", "Neutral")
+
+            structured_states.append(state)
+
+        return structured_states
+
     return final_labels
 
 

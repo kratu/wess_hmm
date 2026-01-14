@@ -55,6 +55,30 @@ SYMBOL = "NIFTY27JAN26FUT"
 IST = timezone("Asia/Kolkata")
 TIMEFRAME = "5m"
 
+
+def duration_bar(
+    duration_min: int,
+    max_ref_min: int = 50,
+    width: int = 10
+) -> str:
+    """
+    Convert duration (minutes) into a block bar.
+
+    - max_ref_min: duration that maps to full bar
+    - width: number of blocks
+    """
+    if duration_min <= 0:
+        return "░" * width
+
+    ratio = min(duration_min / max_ref_min, 1.0)
+    filled = int(round(ratio * width))
+
+    if filled == 0:
+        return "░" + " " * (width - 1)
+
+    return "█" * filled + "░" * (width - filled)
+
+
 def regime_inference():
     global latest_regime
 
@@ -62,30 +86,20 @@ def regime_inference():
     today = datetime.now(IST).strftime("%Y-%m-%d")
 
     # --- Hybrid Rule: Force 1m until 10:30, else 5m ---
-    if now.time() < dtime(10,30):
-        timeframe = "1m"
-    else:
-        timeframe = TIMEFRAME  # usually "5m"
+    if now.time() < dtime(10,10):
+        print("Inference works best after 10:10AM, please check later")
+        return
 
     df = client.history(
         symbol=SYMBOL,
         exchange="NFO",
-        interval=timeframe,
+        interval=TIMEFRAME,
         start_date=today,
         end_date=today
     )
-    # --- Handle API returning dict instead of DataFrame ---
-    if isinstance(df, dict):
-        candles = df.get("data") or df.get("result", {}).get("data", [])
-        if not candles:
-            print(f"[Hybrid] No data from OpenAlgo. Ensure API_KEY is edited and SYMBOL is valid.")
-            sys.exit(0)
-        df = pd.DataFrame(candles)
 
-    # --- Empty or invalid data guard ---
-    if df is None or df.empty:
-        print(f"[Hybrid] Empty dataset for {SYMBOL} — exiting gracefully.")
-        return  # exit gracefully, scheduler will retry on next cycle
+    if df.empty:
+        raise ValueError("No data from OpenAlgo.")
 
     # Normalize datetime
     df.columns = [c.lower() for c in df.columns]
@@ -95,7 +109,6 @@ def regime_inference():
             df.set_index("datetime", inplace=True)
     df.sort_index(inplace=True)
 
-    print(f"Fetched {len(df)} bars: {df.index.min()} → {df.index.max()}")
 
     # --------------------------------------------------
     # INFERENCE PIPELINE
@@ -105,7 +118,7 @@ def regime_inference():
     features = infer.compute_features(df)
 
     if features is None or len(features) < 10:
-        print(f"[RegimeGuard] Early market hours and not enough bars yet ({len(df)}). Waiting for more data. Check from 10:30 AM IST onwards.")
+        print(f"[RegimeGuard] Not enough bars yet ({len(df)}). Waiting for more data.")
         return  # exit gracefully, scheduler will retry on next cycle
 
     features = features.reindex(df.index).dropna()
@@ -119,19 +132,43 @@ def regime_inference():
 
     gov = infer.RegimeGovernor(min_hold=infer.MIN_HOLD_MIN)
     df["RegimeLabel"] = infer.infer_regime_multiscale(
-        X_scaled, df.index, infer.hmmf, regime_governor, infer.clusterer, wlabels
+        X_scaled, df.index, infer.hmmf, gov, infer.clusterer, wlabels
     )
 
-    # --------------------------------------------------
     # SEGMENT SUMMARY
-    # --------------------------------------------------
     segments = infer.summarize_regime_periods(df)
-    print("\n✲✦▾ Hybrid Wasserstein + HMM Regime Inference:")
+    print("\n✲✦▾ Hybrid Wasserstein + HMM Regime Inference:\n")
+    print(f"{'Time':<13} {'Regime':<14} {'Direction':<12} {'Duration':>18}")
     print("⎯" * 100)
-    for start, end, label in segments:
+  
+    for start, end, reg in segments:
         s = start.strftime("%H:%M")
         e = end.strftime("%H:%M")
-        print(f"{s}–{e} – {label}")
+        time_str = f"{s}–{e}"
+
+        # Regime
+        if hasattr(reg, "cls"):
+            regime_str = f"{reg.cls:<14}"
+
+            # Direction
+            if reg.direction == "Up":
+                dir_str = "Up ↑"
+            elif reg.direction == "Down":
+                dir_str = "Down ↓"
+            else:
+                dir_str = "Neutral →"
+            dir_str = f"{dir_str:<12}"
+        else:
+            regime_str = f"{str(reg):<14}"
+            dir_str = f"{'':<12}"
+
+        # Duration
+        duration_min = max(1, int((end - start).total_seconds() // 60))
+        bar = duration_bar(duration_min, 50, width=10)
+        dur_str = f"{duration_min:>3}m {bar}"
+
+        line = f"{time_str:<13} {regime_str} {dir_str} {dur_str:>18}"
+        print(line)
     print("⎯" * 100)
     latest_regime = df["RegimeLabel"].iloc[-1]
 
