@@ -19,14 +19,23 @@ from pytz import timezone
 # --------------------------------------------------
 from openalgo import api
 from config import API_KEY, API_HOST
-import hybrid_regime_infer as infer  # ← use module namespace directly
+import importlib, hybrid_regime_infer as infer  # ← use module namespace directly
+# Diagnostic: confirm which file Python actually loaded
+print(f"[MODULE] hybrid_regime_infer loaded from: {infer.__file__}")
+if not hasattr(infer, 'summarize_regime_periods'):
+    raise AttributeError(
+        "\n\nThe loaded hybrid_regime_infer.py is MISSING summarize_regime_periods.\n"
+        f"File path: {infer.__file__}\n"
+        "Fix: delete __pycache__ next to that file, then re-run.\n"
+        "  rm -rf __pycache__  (from the wess_hmm_v2 directory)\n"
+    )
 
 # --------------------------------------------------
 # INITIALIZE
 # --------------------------------------------------
 IST = timezone("Asia/Kolkata")
 client = api(api_key=API_KEY, host=API_HOST)
-SYMBOL = "NIFTY27JAN26FUT"
+SYMBOL = "NIFTY30MAR26FUT"
 TIMEFRAME = "5m"
 now = datetime.now(IST)
 #today = datetime.now(IST).strftime("%Y-%m-%d")
@@ -35,8 +44,8 @@ now = datetime.now(IST)
 # TEST DATE CONFIG
 # --------------------------------------------------
 # Toggle between fixed test date and today's date
-USE_FIXED_DATE = False          # set to False for live runs
-DAYS_AGO = 7                   # how many days back for testing
+USE_FIXED_DATE = True          # set to False for live runs
+DAYS_AGO = 3                  # how many days back for testing
 
 if USE_FIXED_DATE:
     test_date = (now - timedelta(days=DAYS_AGO))
@@ -151,23 +160,25 @@ if len(features) < 20:
         "Indicators not fully initialized yet."
     )
 
-X_scaled = np.clip(infer.scaler.transform(features), -3, 3)
+# X_std: StandardScaler output (pre-PCA) — used by Wasserstein
+# X_pca: PCA-whitened output — used by HMM (matches training transform)
+X_std = np.clip(infer.scaler.transform(features), -3, 3)
+X_pca = infer.transform_features(features)
 
-if np.any(np.isnan(X_scaled)):
+if np.any(np.isnan(X_std)) or np.any(np.isnan(X_pca)):
     raise ValueError("NaN detected in scaled features — check input data integrity.")
 
-# --- Wasserstein Context ---
-wlabels = infer.compute_wasserstein_context(
-    X_scaled,
-    infer.clusterer,
-    feature_index=0,
-    window=len(infer.clusterer.centroids[0]),
-)
-
 # --- Regime Inference ---
+# infer_regime_multiscale computes Wasserstein context internally.
+# Do NOT call compute_wasserstein_context separately — centroid shape mismatch.
 gov = infer.RegimeGovernor(min_hold=infer.MIN_HOLD_MIN)
 df["RegimeLabel"] = infer.infer_regime_multiscale(
-    X_scaled, df.index, infer.hmmf, gov, infer.clusterer, wlabels
+    X_pca     = X_pca,
+    X_std     = X_std,
+    df_index  = df.index,
+    model     = infer.hmmf,
+    governor  = gov,
+    clusterer = infer.clusterer,
 )
 
 print(f"✔︎ Inference complete in {time.time() - t0:.2f}s")
@@ -205,13 +216,13 @@ for start, end, label in segments:
     e = end.strftime("%H:%M")
     print(f"{s}–{e} – {format_regime(label)}")
 
-print("\n✲ Regime Distribution:")
-print(df["RegimeLabel"].value_counts(normalize=True).round(3))
+df["_regime_str"] = df["RegimeLabel"].apply(format_regime)
 
-# Dominant regimes
-dominant = df["RegimeLabel"].value_counts().sort_values(ascending=False)
+print("\n✲ Regime Distribution:")
+print(df["_regime_str"].value_counts(normalize=True).round(3))
+
 print("\n✺ Dominant Regimes:")
-print(dominant.head(3))
+print(df["_regime_str"].value_counts().head(3))
 
 # --------------------------------------------------
 # VISUALIZATION

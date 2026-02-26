@@ -51,7 +51,7 @@ latest_regime = "Unknown" #Default initial regime
 # Persistent regime governor (IMPORTANT)
 regime_governor = infer.RegimeGovernor(min_hold=infer.MIN_HOLD_MIN)
 
-SYMBOL = "NIFTY27JAN26FUT"
+SYMBOL = "NIFTY24FEB26FUT"
 IST = timezone("Asia/Kolkata")
 TIMEFRAME = "5m"
 
@@ -85,15 +85,17 @@ def regime_inference():
     now = datetime.now(IST)
     today = datetime.now(IST).strftime("%Y-%m-%d")
 
-    # --- Hybrid Rule: Force 1m until 10:30, else 5m ---
-    if now.time() < dtime(10,10):
-        print("Inference works best after 10:10AM, please check later")
-        return
-
+    # --- Hybrid Rule: Force 1m until 10:30, else 5m ---    
+    if now.time() < dtime(10, 20):
+        timeframe = "1m"
+        print("Inference works best after 10:20AM, using fallback 1min")
+    else:
+        timeframe = TIMEFRAME
+        
     df = client.history(
         symbol=SYMBOL,
         exchange="NFO",
-        interval=TIMEFRAME,
+        interval=timeframe,
         start_date=today,
         end_date=today
     )
@@ -138,7 +140,7 @@ def regime_inference():
     # SEGMENT SUMMARY
     segments = infer.summarize_regime_periods(df)
     print("\n✲✦▾ Hybrid Wasserstein + HMM Regime Inference:\n")
-    print(f"{'Time':<13} {'Regime':<14} {'Direction':<12} {'Duration':>18}")
+    print(f"{'Time':<13} {'Regime':<14} {'Direction':<12} {'Duration':<12}")
     print("⎯" * 100)
   
     for start, end, reg in segments:
