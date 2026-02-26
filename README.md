@@ -127,6 +127,7 @@ Together they yield a regime map that is both *temporally coherent* and *geometr
 | **`data/`**                              | Contains pre-trained `.pkl` model files — HMM, Wasserstein centroids, and StandardScaler.                                             |
 | **`LICENSE`**                             | Legal license (Apache V2.0).                                                                                               |
 | **`README.md`**                           | This documentation.                                                                                                                   |
+| **`change_log.md`**                           | Version 2 change log with details on updates.                                                                                                                   |
 | **`Hybrid_Wasserstein_HMM_Regime_Detection.pdf`**                           | Paper describing the workings of the methodology         |
 
 
@@ -196,6 +197,14 @@ This script:
 * Runs multi-scale HMM + Wasserstein regime inference
 * Prints segment breakdowns
 * Optionally plots regime labels over price
+
+---
+
+## **Changes**
+
+### **V2. Changelog**
+Refer to change_log document for detailed description on the changes made to Version 2.0 (26 February, 2026)
+
 
 ---
 
