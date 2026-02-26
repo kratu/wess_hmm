@@ -81,7 +81,7 @@ STATE_MAP_FILE  = os.path.join(DATA_DIR, "state_to_label.pkl")
 
 # Fallback if state_to_label.pkl not found (should not happen after v2 training)
 # 4-state fallback: two Trending states, one Range, one Choppy.
-# Direction (Up/Down) is annotated per-bar at inference from slope sign.
+# Direction (Up/Down) annotated per-bar from slope sign.
 _FALLBACK_STATE_TO_LABEL = {0: "Trending", 1: "Trending", 2: "Range", 3: "Choppy"}
 
 MIN_HOLD_MIN = 20
@@ -140,6 +140,7 @@ def load_models_once():
 
     _models_loaded = True
     print(f"✲✦▾  Models loaded. State mapping: {STATE_TO_LABEL}")
+    print(f"     [v2.1 — slope normalised by price, 4-state HMM, loaded from: {os.path.abspath(MODEL_FILE_HMM)}]")
 
 
 # --------------------------------------------------
@@ -168,7 +169,10 @@ def compute_features(df: pd.DataFrame) -> Optional[pd.DataFrame]:
         r2     = 1.0 - ss_res / ss_tot if ss_tot > 1e-12 else 0.0
         return coeffs[0], r2
 
-    df["slope"]     = df["close"].rolling(14).apply(lambda x: _slope_r2(x)[0], raw=False)
+    df["slope"]     = (
+        df["close"].rolling(14).apply(lambda x: _slope_r2(x)[0], raw=False)
+        / df["close"].rolling(14).mean()
+    )
     df["r2"]        = df["close"].rolling(14).apply(lambda x: _slope_r2(x)[1], raw=False)
     df["range_vol"] = (df["high"] - df["low"]).rolling(14).mean() / df["close"].rolling(14).mean()
     df["volatility"]= df["close"].pct_change().rolling(14).std()
@@ -233,13 +237,12 @@ class RegimeGovernor:
         conf    = float(np.max(probs))
         label   = "Transitional"
 
-        # With 4 states, uniform entropy = ln(4) ≈ 1.386.
-        # conf >= 0.20 allows a 40-30-20-10 split to commit.
-        # entropy <= 2.0 blocks fully uncertain bars.
+        # 4-state: uniform entropy = ln(4) ≈ 1.386. Ceiling 2.0 allows
+        # split-but-leaning posteriors to commit. Floor 0.20 requires plurality.
         if conf >= 0.20 and entropy <= 2.0:
             label = STATE_TO_LABEL.get(int(np.argmax(probs)), "Transitional")
 
-        # Transitional does not enforce min_hold — it should resolve quickly.
+        # Transitional does not enforce min_hold — resolves immediately.
         if self.last_label is not None:
             hold = (timestamp - self.last_change).total_seconds() / 60
             if label != self.last_label:
@@ -256,14 +259,9 @@ class RegimeGovernor:
     def decide_multiscale(self, labels: list, timestamp: datetime) -> str:
         short, mid, long_ = labels[0], labels[1], labels[2]
 
-        # ── 4-state fusion logic ───────────────────────────────────────────
-        # Priority: strong agreement > partial agreement > plurality.
-        # Transitional is NOT a poison pill — only wins if majority agree.
-
         if short == mid == long_:
             label = short
         elif short == mid:
-            # Faster windows agree — override stale long_
             label = short
         elif labels.count("Trending") >= 2:
             label = "Trending"
@@ -278,7 +276,6 @@ class RegimeGovernor:
         else:
             label = max(set(labels), key=labels.count)
 
-        # ── Min-hold: Transitional does not enforce hold ───────────────────
         if self.last_label is not None:
             hold = (timestamp - self.last_change).total_seconds() / 60
             if label != self.last_label:
@@ -338,19 +335,14 @@ def compute_wasserstein_context(
 # HELPER FUNCTIONS
 # --------------------------------------------------
 def _regime_key(label):
-    """Stable equality key — ignores confidence so bars with same cls+direction
-    but different confidence values merge into one segment."""
     if hasattr(label, "cls"):
         return (label.cls, label.direction)
     return str(label)
 
-
 def summarize_regime_periods(df, label_col="RegimeLabel"):
-    """Return (start, end, label) tuples per contiguous regime segment.
-    Equality uses (cls, direction) only — confidence is ignored."""
     if label_col not in df.columns:
         return []
-    segs          = []
+    segs = []
     current_label = df[label_col].iloc[0]
     current_key   = _regime_key(current_label)
     start_time    = df.index[0]
@@ -414,7 +406,11 @@ def infer_regime_multiscale(
     )
 
     # ── Multi-scale window voting ─────────────────────────────────────────────
-    windows = [6, 12, 24]
+    # Window sizes in bars (5-min bars: 6=30min, 12=60min).
+    # The old 24-bar (2hr) window carried too much trending memory,
+    # preventing Choppy/Range from firing after a trend ends.
+    # Using [6, 12, 12]: short + two medium windows for faster response.
+    windows = [6, 12, 12]
     regimes_by_window = {w: [] for w in windows}
 
     for w in windows:
@@ -431,8 +427,6 @@ def infer_regime_multiscale(
     # Wasserstein centroids are sorted by mean(centroid) descending in the
     # clusterer (v1 logic preserved). Cluster 0 ≈ highest-mean returns = Trending.
     # Map: 0→Trending, 1→Range, 2→Choppy  (soft heuristic, not critical)
-    # With 4 Wasserstein clusters sorted by mean return (descending):
-    # 0=strong-trend, 1=mild-trend/range-boundary, 2=quiet-range, 3=choppy
     WASS_CLUSTER_TO_REGIME = {0: "Trending", 1: "Trending", 2: "Range", 3: "Choppy"}
 
     # ── Per-bar fusion ────────────────────────────────────────────────────────
@@ -522,6 +516,15 @@ def infer_hybrid_regime_for_live_data(df: pd.DataFrame, min_hold: int = MIN_HOLD
     raw_features = compute_features(df)
     if raw_features is None:
         return {"error": "Feature computation failed."}
+
+    # Diagnostic: confirm slope normalisation is active
+    # Normalised slope should be ~1e-5 scale, not ~0.1-1.0 scale
+    _slope_sample = raw_features["slope"].iloc[-1]
+    if abs(_slope_sample) > 0.01:
+        print(f"  ⚠  SLOPE NOT NORMALISED: slope[-1]={_slope_sample:.4f} (expected ~1e-5)")
+        print(f"     Check that hybrid_regime_infer.py has slope / rolling_mean fix.")
+    else:
+        print(f"  ✔  slope[-1]={_slope_sample:.6f} (normalised ✓)")
 
     # Apply full transform pipeline
     X_std = np.clip(scaler.transform(raw_features), -4, 4)

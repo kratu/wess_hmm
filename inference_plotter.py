@@ -45,7 +45,7 @@ now = datetime.now(IST)
 # --------------------------------------------------
 # Toggle between fixed test date and today's date
 USE_FIXED_DATE = True          # set to False for live runs
-DAYS_AGO = 3                  # how many days back for testing
+DAYS_AGO = 2                  # how many days back for testing
 
 if USE_FIXED_DATE:
     test_date = (now - timedelta(days=DAYS_AGO))
@@ -160,8 +160,6 @@ if len(features) < 20:
         "Indicators not fully initialized yet."
     )
 
-# X_std: StandardScaler output (pre-PCA) — used by Wasserstein
-# X_pca: PCA-whitened output — used by HMM (matches training transform)
 X_std = np.clip(infer.scaler.transform(features), -3, 3)
 X_pca = infer.transform_features(features)
 
@@ -170,7 +168,6 @@ if np.any(np.isnan(X_std)) or np.any(np.isnan(X_pca)):
 
 # --- Regime Inference ---
 # infer_regime_multiscale computes Wasserstein context internally.
-# Do NOT call compute_wasserstein_context separately — centroid shape mismatch.
 gov = infer.RegimeGovernor(min_hold=infer.MIN_HOLD_MIN)
 df["RegimeLabel"] = infer.infer_regime_multiscale(
     X_pca     = X_pca,
@@ -180,6 +177,21 @@ df["RegimeLabel"] = infer.infer_regime_multiscale(
     governor  = gov,
     clusterer = infer.clusterer,
 )
+
+# --- Posterior diagnostic ---
+# Shows RAW (unsmoothed) HMM posteriors — isolates whether the HMM itself
+# is uncertain vs the multi-scale smoothing window carrying old history.
+_, posteriors_raw = infer.hmmf.score_samples(X_pca)
+state_labels  = [infer.STATE_TO_LABEL.get(i, f"S{i}") for i in range(infer.hmmf.n_components)]
+post_df = pd.DataFrame(posteriors_raw, index=df.index, columns=state_labels)
+
+# Show the critical transition zone: 30 bars around midday
+mid = len(df) // 2
+diag_slice = post_df.iloc[max(0, mid-5): min(len(post_df), mid+25)]
+print("\n─── RAW posterior diagnostics (midday transition zone) ──────────────")
+print(diag_slice.round(3).to_string())
+print("\n─── RAW posterior diagnostics (last 10 bars) ────────────────────────")
+print(post_df.tail(10).round(3).to_string())
 
 print(f"✔︎ Inference complete in {time.time() - t0:.2f}s")
 

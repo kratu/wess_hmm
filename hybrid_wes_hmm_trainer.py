@@ -131,7 +131,10 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
         r2     = 1.0 - ss_res / ss_tot if ss_tot > 1e-12 else 0.0
         return coeffs[0], r2
 
-    df["slope"]    = df["close"].rolling(14).apply(lambda x: _slope_r2(x)[0], raw=False)
+    df["slope"]    = (
+        df["close"].rolling(14).apply(lambda x: _slope_r2(x)[0], raw=False)
+        / df["close"].rolling(14).mean()
+    )
     df["r2"]       = df["close"].rolling(14).apply(lambda x: _slope_r2(x)[1], raw=False)
     df["range_vol"]= (df["high"] - df["low"]).rolling(14).mean() / df["close"].rolling(14).mean()
     df["volatility"]= df["close"].pct_change().rolling(14).std()
@@ -342,7 +345,7 @@ MIN_STATE_FRACTION = 0.05   # each state should cover ≥5% of data with 4 state
 
 
 def train_hmm(X, n_components, init_params, means_init, covariance_type,
-              seeds=(42, 7, 13, 99, 2024), n_iter=200):
+              seeds=(42, 7, 13, 99, 2024, 101, 314, 777, 1234, 5678), n_iter=200):
     """
     Train GaussianHMM with multi-seed retry to avoid degenerate states.
     Returns best non-degenerate model, or best available if all are degenerate.
@@ -531,11 +534,15 @@ def derive_state_to_label(state_profile: pd.DataFrame) -> dict:
           f"r2={r2[range_state]:.3f}, |slope|={slp[range_state]:.3f})")
 
     # ── Step 2: Choppy = highest volatility WITH low R² ───────────────────
-    # Among remaining states, sort by vol descending.
-    # A state qualifies as Choppy if r2 < R2_CHOPPY_THRESHOLD.
-    # If the highest-vol state has r2 ≥ threshold, it's a volatile trend —
-    # skip it and try the next. If no state qualifies, fall back to a
-    # combined score: vol_normalised - r2_normalised (high vol, low r2 wins).
+    # A state qualifies as Choppy only if r2 < R2_CHOPPY_THRESHOLD.
+    # Low R² means price movement is erratic and doesn't fit a line —
+    # genuine chop. High R² means directional structure — it's a trend.
+    #
+    # If NO state qualifies (all remaining have R² ≥ threshold), Choppy is
+    # skipped entirely. All remaining states become Trending. This is the
+    # honest outcome when the model hasn't learned a Choppy cluster —
+    # forcing a mislabelled Choppy state is worse than having none.
+    # Add regime_annotations.csv with genuine Choppy days to enable this.
 
     remaining_by_vol = sorted(remaining, key=lambda s: vol[s], reverse=True)
 
@@ -546,26 +553,12 @@ def derive_state_to_label(state_profile: pd.DataFrame) -> dict:
             break
 
     if choppy_state is None:
-        # No clearly low-R² state — use combined score as fallback
-        vol_arr = np.array([vol[s] for s in remaining])
-        r2_arr  = np.array([r2[s]  for s in remaining])
-        # Normalise to [0,1] within remaining set
-        vol_norm = (vol_arr - vol_arr.min()) / (vol_arr.ptp() + 1e-9)
-        r2_norm  = (r2_arr  - r2_arr.min())  / (r2_arr.ptp()  + 1e-9)
-        scores   = vol_norm - r2_norm   # want high vol, low r2
-        choppy_state = remaining[int(np.argmax(scores))]
-        print(f"  ⚠  No state with R²<{R2_CHOPPY_THRESHOLD} found — using combined vol-r2 score.")
-        print(f"     Best candidate: State {choppy_state} "
-              f"(vol={vol[choppy_state]:.4f}, r2={r2[choppy_state]:.3f})")
-
-    mapping[choppy_state] = "Choppy"
-    remaining.remove(choppy_state)
-
-    # Log with explicit warning if R² is suspiciously high for a Choppy state
-    if r2[choppy_state] >= R2_CHOPPY_THRESHOLD:
-        print(f"  ⚠  Choppy → State {choppy_state}  r2={r2[choppy_state]:.3f} ≥ {R2_CHOPPY_THRESHOLD} "
-              f"— this state may be a volatile trend. Add annotations to correct.")
+        print(f"  ℹ  No state with R²<{R2_CHOPPY_THRESHOLD} — Choppy label skipped.")
+        print(f"     All remaining states will be labelled Trending.")
+        print(f"     Add regime_annotations.csv with Choppy examples to enable this label.")
     else:
+        mapping[choppy_state] = "Choppy"
+        remaining.remove(choppy_state)
         print(f"  Choppy  → State {choppy_state}  "
               f"(vol={vol[choppy_state]:.4f}, adx={adx[choppy_state]:.1f}, "
               f"r2={r2[choppy_state]:.3f}, |slope|={slp[choppy_state]:.3f})")
@@ -641,15 +634,25 @@ for regime, pct in dist.items():
     print(f"    {regime:15s}  {pct:.1%}  {bar}")
 
 # Warn if any regime is under-represented (< 5%)
-for regime in ["Trending", "Range", "Choppy"]:
+# Choppy is excluded — it's intentionally absent until annotations are added.
+for regime in ["Trending", "Range"]:
     pct = dist.get(regime, 0.0)
     if pct < 0.05:
         print(f"\n  ⚠  WARNING: '{regime}' is only {pct:.1%} of training data.")
         print(f"     Consider adding more labeled samples for this regime in {ANNOTATION_FILE}.")
 
-# Warn if Trending dominates excessively (> 70%)
+choppy_pct = dist.get("Choppy", 0.0)
+if choppy_pct > 0:
+    if choppy_pct < 0.05:
+        print(f"\n  ⚠  WARNING: 'Choppy' is only {choppy_pct:.1%} of training data.")
+        print(f"     Add more Choppy examples in {ANNOTATION_FILE}.")
+else:
+    print(f"\n  ℹ  Choppy label absent — no state qualified (R²<{R2_CHOPPY_THRESHOLD}).")
+    print(f"     This is expected without annotations. Add Choppy examples to enable.")
+
+# Warn if Trending dominates excessively (> 80% — higher threshold since Choppy may be absent)
 trending_pct = dist.get("Trending", 0.0)
-if trending_pct > 0.70:
+if trending_pct > 0.80:
     print(f"\n  ⚠  WARNING: Trending = {trending_pct:.1%}. Model may still be biased.")
     print(f"     Try adding Range/Choppy annotations or reducing ANCHOR_ALPHA.")
 

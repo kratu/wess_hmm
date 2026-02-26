@@ -1,0 +1,4 @@
+datetime_start,datetime_end,regime,confidence
+2026-02-26 09:15:00,2026-02-26 10:57:00,Choppy,high
+2026-02-26 11:03:00,2026-02-26 11:27:00,Trending,high
+2026-02-26 11:27:00,2026-02-26 12:25:00,Trending,high
