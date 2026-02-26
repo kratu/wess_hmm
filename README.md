@@ -236,6 +236,14 @@ It provides a reproducible framework to explore regime-aware trading, model vali
 
 ---
 
+## **Common Issues**
+
+For the setup, ensure that SYMBOL is set and API_KEY is replaced with yours.
+If you running the inference_plotter on historical date, ensure it is not a market holiday.
+
+
+---
+
 ## **Legal Disclaimer**
 
 ```

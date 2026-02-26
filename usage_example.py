@@ -1,4 +1,3 @@
-
 """
 Hybrid Regime Inference — Integration Example
 ---------------------------------------------
@@ -51,7 +50,7 @@ latest_regime = "Unknown" #Default initial regime
 # Persistent regime governor (IMPORTANT)
 regime_governor = infer.RegimeGovernor(min_hold=infer.MIN_HOLD_MIN)
 
-SYMBOL = "NIFTY24FEB26FUT"
+SYMBOL = "NIFTY30MAR26FUT"
 IST = timezone("Asia/Kolkata")
 TIMEFRAME = "5m"
 
@@ -85,13 +84,13 @@ def regime_inference():
     now = datetime.now(IST)
     today = datetime.now(IST).strftime("%Y-%m-%d")
 
-    # --- Hybrid Rule: Force 1m until 10:30, else 5m ---    
+    # --- Hybrid Rule: Force 1m until 10:20, else 5m ---
     if now.time() < dtime(10, 20):
         timeframe = "1m"
         print("Inference works best after 10:20AM, using fallback 1min")
     else:
         timeframe = TIMEFRAME
-        
+
     df = client.history(
         symbol=SYMBOL,
         exchange="NFO",
@@ -113,28 +112,36 @@ def regime_inference():
 
 
     # --------------------------------------------------
-    # INFERENCE PIPELINE
+    # INFERENCE PIPELINE  (v2.1)
     # --------------------------------------------------
     infer.load_models_once()
 
-    features = infer.compute_features(df)
+    raw_features = infer.compute_features(df)
 
-    if features is None or len(features) < 10:
+    if raw_features is None or len(raw_features) < 10:
         print(f"[RegimeGuard] Not enough bars yet ({len(df)}). Waiting for more data.")
         return  # exit gracefully, scheduler will retry on next cycle
 
-    features = features.reindex(df.index).dropna()
-    df = df.loc[features.index]
+    raw_features = raw_features.reindex(df.index).dropna()
+    df = df.loc[raw_features.index]
 
-    X_scaled = np.clip(infer.scaler.transform(features), -3, 3)
-    wlabels = infer.compute_wasserstein_context(
-        X_scaled, infer.clusterer, feature_index=0,
-        window=len(infer.clusterer.centroids[0])
-    )
+    # v2.1: apply the full StandardScaler → PCA pipeline via transform_features().
+    # X_std is also needed separately for the Wasserstein context (pre-PCA).
+    X_std = np.clip(infer.scaler.transform(raw_features), -4, 4)
+    X_pca = infer.transform_features(raw_features)
 
     gov = infer.RegimeGovernor(min_hold=infer.MIN_HOLD_MIN)
+
+    # v2.1: infer_regime_multiscale takes X_pca and X_std separately.
+    # Wasserstein context is computed internally from X_std.
+    # wlabels is no longer a caller responsibility.
     df["RegimeLabel"] = infer.infer_regime_multiscale(
-        X_scaled, df.index, infer.hmmf, gov, infer.clusterer, wlabels
+        X_pca     = X_pca,
+        X_std     = X_std,
+        df_index  = df.index,
+        model     = infer.hmmf,
+        governor  = gov,
+        clusterer = infer.clusterer,
     )
 
     # SEGMENT SUMMARY
@@ -142,7 +149,7 @@ def regime_inference():
     print("\n✲✦▾ Hybrid Wasserstein + HMM Regime Inference:\n")
     print(f"{'Time':<13} {'Regime':<14} {'Direction':<12} {'Duration':<12}")
     print("⎯" * 100)
-  
+
     for start, end, reg in segments:
         s = start.strftime("%H:%M")
         e = end.strftime("%H:%M")
@@ -226,7 +233,7 @@ def core_step():
 # Run regime inference every 5 minutes
 # Core step executes every 30 seconds using latest regime state
 
- 
+
 # SETUP SCHEDULER ---------------------------------------------------------------------------------
 def setup_scheduler(scheduler):
     """
@@ -247,7 +254,7 @@ def setup_scheduler(scheduler):
     scheduler.add_job(
         regime_inference,
         trigger='interval',
-        seconds=300, #run every 5 minutes 
+        seconds=300,  # run every 5 minutes
         id='regime_inference',
         replace_existing=True
     )
@@ -260,14 +267,13 @@ if __name__ == "__main__":
     scheduler = BackgroundScheduler(timezone=IST)
     setup_scheduler(scheduler)
 
-    regime_inference() #Initial run
+    regime_inference()  # Initial run
 
     from apscheduler.jobstores.base import JobLookupError
     try:
         scheduler.start()
     except SchedulerAlreadyRunningError:
         print("Scheduler already running; continuing.")
-
 
     try:
         print("OpenAlgo Python Bot is running.")
