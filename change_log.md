@@ -1,230 +1,145 @@
-# Hybrid Wasserstein + HMM Regime Detector — v2.0 → v2.1 Changelog
+# Hybrid Wasserstein + HMM Regime Detector — v2.1 Release
 
-## Overview
 
-This document covers the full evolution of the regime detection system from its
-initial v2.0 architecture through the diagnostic and debugging work that produced
-the current v2.1 stable baseline. The changes span the trainer, the inference
-module, and a new annotation toolchain.
+## What changed in v2.1
 
----
+### 1. Fixed regime label assignment
+**Before:** Labels were assigned using cosine similarity against regime archetypes.
+When HMM states had similar ADX values, scores collapsed to identical values and
+assignment became essentially random. A strong downtrend was being labelled Choppy.
 
-## Background
-
-The system uses a two-layer architecture: a Wasserstein distance clusterer for
-structural market context and a Gaussian HMM for temporal regime sequencing.
-Features are derived from 5-minute OHLC bars and include ADX, R², volatility,
-slope, range-vol, ATR, and log-returns. Training data covers NIFTY Futures
-2015–2022 (~106,000 bars).
+**After:** Replaced with a deterministic decision tree — lowest volatility state
+gets Range, highest volatility state with R² below threshold gets Choppy, everything
+else gets Trending. R² (how well price fits a straight line) is the key signal:
+genuine chop has erratic moves that don't fit a line. This mapping is stable
+across retrains.
 
 ---
 
-## Issue 1 — State mislabelling via cosine similarity (v2.0 bug)
+### 2. Slope feature normalised by price level
+**Before:** Slope was computed as raw price points per bar. The model was trained
+on NIFTY at ~11,000 (2015–2022) but runs live at ~25,800 (2026). The same
+absolute slope value is 2.3× smaller in relative terms at live prices, so quiet
+2026 afternoons matched the "gentle trend" emission distribution from training.
 
-**Symptom:** Feb-19 (a clean 400-point sustained downtrend) was labelled
-entirely as Choppy. Feb-23 was mostly Transitional despite a visible stepwise
-decline.
-
-**Root cause:** `derive_state_to_label` was using cosine similarity against
-regime archetypes to assign labels. All three HMM states had similar ADX values
-(34–46), causing the cosine similarity scores to collapse to near-identical
-values (~1.000 for all). The tiebreaker then assigned State 1 (ADX=45.8,
-slope=-1.76 — a strong downtrend) as Choppy because it happened to win the
-volatility comparison.
-
-**Fix:** Replaced cosine similarity entirely with a deterministic decision tree:
-1. **Range** → lowest mean volatility state (unambiguous, always lowest)
-2. **Choppy** → highest volatility with R² < 0.35 (R² measures linearity; choppy
-   price has erratic moves that don't fit a line — genuine chop has LOW R²,
-   regardless of volatility)
-3. **Trending** → all remaining states, sorted by |slope| descending
-
-If no state qualifies for Choppy (R² < threshold), Choppy is skipped entirely
-and all remaining states are labelled Trending. This is the honest outcome when
-the model hasn't seen enough choppy training examples — forcing a mislabelled
-Choppy state is worse than having none.
+**After:** Slope is divided by the 14-bar rolling mean close price, making it a
+dimensionless relative measure that is consistent across all price levels. Applied
+identically in both trainer and inference — a mismatch between the two is a silent
+error and would cause systematic miscalibration.
 
 ---
 
-## Issue 2 — Broken import causing silent cache fallback
+### 3. Reduced multi-scale window from 24 bars to 12 bars
+**Before:** Posteriors were averaged across windows of 6, 12, and 24 bars. A
+24-bar (2-hour) window at 14:00 still contains trending bars from 12:00, keeping
+the trending state dominant even when current conditions have clearly changed.
 
-**Symptom:** Repeated retraining produced identical inference output regardless
-of model changes. Training log showed correct state profiles but inference didn't
-change.
-
-**Root cause:** The trainer had `from hybrid_regime_infer_v2 import
-WassersteinClusterer` but the file had been renamed to `hybrid_regime_infer.py`.
-Python silently fell back to `__pycache__`, loading the old compiled bytecode on
-every run.
-
-**Fix:** Corrected import to `from hybrid_regime_infer import WassersteinClusterer`.
-Added a version stamp to `load_models_once()` that prints the absolute path of
-the loaded pkl file, making this class of issue immediately visible in future.
+**After:** Windows are now 6, 12, 12 bars. The longest memory is 60 minutes,
+enough for context without carrying morning structure into the afternoon.
 
 ---
 
-## Issue 3 — Slope feature not normalised by price level
+### 4. PCA whitening applied at inference
+**Before:** Inference applied StandardScaler only. Training used StandardScaler
+followed by PCA whitening, meaning the HMM received a different feature
+distribution at inference than it was trained on.
 
-**Symptom:** After fixing the label mapping, State 3 (Trending-secondary) still
-received posterior = 1.000 for all afternoon bars on Feb-23 — a visibly choppy
-oscillating session. The HMM had zero uncertainty despite clear visual chop.
+**After:** PCA transform artifact (`regime_pca.pkl`) is saved at training time
+and loaded at inference. The full StandardScaler → PCA pipeline is applied
+identically in both.
 
-**Root cause:** `slope` was computed as raw price points per bar from `np.polyfit`.
-Training data covered NIFTY at 8,000–18,000 (2015–2022 average ~11,000). Live
-inference runs on NIFTY at ~25,800 (2026). A slope of +0.18 pts/bar represents
-+0.0017%/bar at training prices but only +0.0007%/bar at live prices — 2.3×
-smaller in relative terms. The model learned that slope=+0.18 means "gentle
-grind" at 11,000 levels, but at 25,800 the same absolute value means
-"essentially flat". Flat 2026 afternoons matched State 3's emission distribution
-perfectly.
+---
 
-**Fix:** Normalised slope by the 14-bar rolling mean close price in both trainer
-and inference feature engines:
+### 5. Full-sequence HMM posteriors (not per-bar)
+**Before:** `score_samples` was called individually per bar. A single-observation
+sequence has no transitions, so the HMM's transition matrix was being ignored
+entirely during inference.
 
-```python
-# Before (level-dependent)
-df["slope"] = df["close"].rolling(14).apply(lambda x: _slope_r2(x)[0], raw=False)
+**After:** `score_samples` is called once on the full sequence. The
+forward-backward algorithm integrates transition probabilities correctly, giving
+temporally coherent posteriors across the session.
 
-# After (level-independent)
-df["slope"] = (
-    df["close"].rolling(14).apply(lambda x: _slope_r2(x)[0], raw=False)
-    / df["close"].rolling(14).mean()
-)
+---
+
+### 6. State-to-label mapping saved as artifact
+**Before:** Label mapping was hardcoded in the inference module and had to be
+manually updated after each retrain.
+
+**After:** `derive_state_to_label` runs at training time and saves
+`state_to_label.pkl`. Inference loads it automatically. No manual sync required
+between trainer and inference after a retrain.
+
+---
+
+### 7. Posterior diagnostic logging
+**New.** The plotter now prints raw (pre-smoothing) HMM state probabilities for
+the midday transition zone and last 10 bars of each session. This makes it
+immediately clear whether a misclassification is a model-level problem (posterior
+= 1.000 on the wrong state — requires training changes) or an inference-level
+problem (split posteriors being averaged incorrectly — requires threshold or
+window changes). Without this distinction, every debugging cycle requires guessing
+which layer is at fault.
+
+---
+
+### 8. Annotation toolchain (`annotate_regimes.py`)
+**New.** Interactive CLI for labelling historical sessions and building
+`data/regime_annotations.csv`. Accepts human-friendly input, handles direction
+aliases, supports undo and per-session review.
+
+```
+> 09:15-10:30 Trending-Up
+> 11:00-13:45 Choppy medium
+> 14:00-15:25 R
 ```
 
-Critical: this change must be applied identically in both `hybrid_wes_hmm_trainer.py`
-and `hybrid_regime_infer.py`. Mismatch between training and inference feature
-distributions is a silent, hard-to-diagnose error.
-
-**Retrain required:** Yes. Existing pkl artifacts are stale after this change.
-
----
-
-## Issue 4 — 24-bar window carrying trend memory into post-trend chop
-
-**Symptom:** Even after slope normalisation, Transitional dominated the
-12:45–14:30 block on Feb-23. The HMM itself was not at fault — raw posteriors
-showed State 3 = 1.000 throughout.
-
-**Root cause:** `infer_regime_multiscale` averaged posteriors across windows of
-[6, 12, 24] bars. A 24-bar window at 14:10 contains bars from 12:10 onwards —
-half of which were during the strong trending-down morning. Simulation confirmed
-that 14 trending bars + 10 choppy bars in a 24-bar average keeps State 3 at
-0.697 even when the current bars are unambiguously choppy. The 0.20 confidence
-floor is then easily cleared and the label stays Trending.
-
-**Fix:** Changed windows from `[6, 12, 24]` to `[6, 12, 12]`. The longest
-memory is now 60 minutes. A regime that ends at 13:00 stops influencing labels
-by 14:00 at the latest.
+Annotations are used by the trainer's supervised anchoring mechanism to
+initialise HMM emission means directly in labelled regions of PCA space — the
+correct approach when unsupervised EM cannot find a cluster because it lacks a
+natural geometric gap.
 
 ---
 
-## Issue 5 — Posterior diagnostic tooling (observability improvement)
+## Benefits over v1
 
-**Root cause of multiple debugging cycles:** Every diagnosis required guessing
-whether the problem was the HMM, the smoothing, or the label mapping. There was
-no way to see the raw HMM belief per bar.
-
-**Fix:** Added posterior diagnostic output to the plotter, showing the raw
-(pre-smoothing) HMM state probabilities for the midday transition zone and the
-last 10 bars of each session. This immediately distinguishes:
-- "HMM is uncertain, smoothing is amplifying noise" (split posteriors ~0.4/0.3/0.2)
-- "HMM is wrong at the model level" (posterior = 1.000 on wrong state)
-
-The second case (posterior = 1.000 persistently) tells you the problem is in
-training data or feature engineering — no amount of threshold or window tuning
-will fix it.
+| | v1 | v2.1 |
+|---|---|---|
+| Label assignment | Cosine similarity (unstable) | Decision tree on vol + R² (stable) |
+| Slope feature | Raw price points (level-dependent) | Normalised by price (level-independent) |
+| Inference transform | StandardScaler only | StandardScaler + PCA (matches training) |
+| HMM posteriors | Per-bar (ignores transitions) | Full sequence (uses transition matrix) |
+| State mapping | Hardcoded in inference | Saved artifact, auto-loaded |
+| Window memory | 24-bar max (2 hours) | 12-bar max (1 hour) |
+| Diagnostics | Output labels only | Raw posteriors per bar |
+| Annotations | Not supported | Interactive CLI + supervised anchoring |
 
 ---
 
-## Issue 6 — Unsupervised HMM cannot find quiet-chop cluster (current known gap)
+## Known gap
 
-**Symptom:** Feb-23 afternoon posteriors show State 3 = 1.000 on every bar even
-after all fixes above. The forward-backward algorithm is 100% certain those bars
-belong to State 3 (Trending-secondary). This is correct given the training
-data — it is not a bug.
+The current model cannot distinguish **quiet chop** (low volatility, low R²,
+directionless) from **quiet drift** (low volatility, moderate R², gentle trend).
+These two regimes overlap in feature space and unsupervised EM cannot find a
+clean boundary between them. An attempt at 5-state training found an extreme
+outlier microstate (14 bars) as the 5th cluster rather than the desired quiet-chop
+cluster.
 
-**Root cause:** The 4-state model has:
-- State 0: Active trend (high ADX, high R², high vol)
-- State 1: Deep range (very low vol)
-- State 2: Active chop (moderate vol, low R²)
-- State 3: Quiet drift (low vol, moderate R²) — the "miscellaneous" bin
-
-Feb-23 afternoons are **quiet chop**: low vol AND low R². This sits in a gap
-between State 2 (too low vol for active chop) and State 3 (too low R² for
-quiet drift). State 3 wins because its vol and ADX match better — R² is only
-one of nine features in 9D PCA space and cannot overcome the vol/ADX advantage.
-
-**Attempted fix:** Increased to N_CLUSTERS=5. EM found a 14-bar extreme outlier
-microstate (ADX=67, vol=0.077) as the 5th cluster across all 10 seeds, and
-split the medium-noise space into two near-identical states. The quiet-chop
-geometry does not have a natural gap that unsupervised EM can find.
-
-**Current status:** Reverted to 4 states. This gap requires **supervised
-anchoring** — adding `regime_annotations.csv` with examples of quiet-choppy
-afternoons (expiry days, post-announcement drift, pre-event consolidation) so
-the anchor mechanism can initialise an HMM emission mean directly in the
-quiet-chop region of PCA space.
+This is a supervised anchoring problem — adding labelled examples of quiet-choppy
+sessions (expiry-day afternoons, post-announcement drift) via `annotate_regimes.py`
+will allow the anchor mechanism to initialise the HMM directly in the correct
+region. Targeted for the next training iteration.
 
 ---
 
-## New tooling: `annotate_regimes.py`
+## Files
 
-Interactive CLI for building `data/regime_annotations.csv`. Accepts
-human-friendly time range input and appends labeled segments to the annotation
-file used by the trainer's supervised anchoring mechanism.
-
-**Supported input formats:**
-```
-09:15-10:30 Trending
-11:03-11:27 Trending-Up        # direction aliases normalise to Trending
-14:00-15:25 Choppy medium
-10:00-11:00 T-Down             # shorthand accepted
-13:00-15:25 R                  # single-letter shorthand
-```
-
-Commands: `done`, `skip`, `show`, `undo`, `quit`
-
-The CSV format consumed by the trainer:
-```csv
-datetime_start,datetime_end,regime,confidence
-2022-06-30 09:15:00,2022-06-30 10:30:00,Trending,high
-2022-06-30 11:00:00,2022-06-30 13:45:00,Choppy,medium
-```
+| File | Description |
+|------|-------------|
+| `hybrid_wes_hmm_trainer.py` | Trainer — slope normalised, R²-aware labels, 10-seed retry |
+| `hybrid_regime_infer.py` | Inference — full-sequence posteriors, PCA loaded, diagnostics |
+| `annotate_regimes.py` | Interactive annotation CLI |
+| `data/regime_annotations.csv` | Human labels for supervised anchoring (build with CLI) |
 
 ---
 
-## Current state of all files
-
-| File | Status |
-|------|--------|
-| `hybrid_wes_hmm_trainer.py` | v2.1 — slope normalised, 4-state, R²-aware label mapping, 10-seed retry |
-| `hybrid_regime_infer.py` | v2.1 — slope normalised, windows [6,12,12], posterior diagnostics, version stamp |
-| `annotate_regimes.py` | New — interactive annotation CLI |
-| `data/regime_annotations.csv` | Pending — needs 15–20 Choppy segments from 2015–2022 data |
-
----
-
-## Next steps
-
-1. Use `annotate_regimes.py` to label 15–20 Choppy sessions from the training
-   data (2015–2022). Target: expiry-day afternoons, post-RBI afternoons,
-   post-gap-up/down consolidation sessions.
-
-2. Retrain with annotations. The anchor mechanism will initialise a dedicated
-   emission mean for quiet-chop in PCA space. With anchoring, 4 states should
-   be sufficient — the missing cluster will be found because EM now knows where
-   to look.
-
-3. Validate on Feb-23 (quiet-chop afternoon), Feb-25 (trend reversal), and
-   Feb-19 (clean downtrend). All three should now produce coherent output.
-
-4. Once annotations are in place, consider adding a slope normalization audit —
-   verify the normalised slope distribution is consistent between training data
-   (2015–2022) and live inference (2026) to catch any remaining level-dependent
-   features.
-
----
-
-*Last updated: 2026-02-26*
-*Training data: NIFTY Futures 5-min, 2015-03-02 → 2022-10-13, 106,355 bars*
+*Training data: NIFTY Futures 5-min · 2015-03-02 → 2022-10-13 · 106,355 bars*
