@@ -55,9 +55,11 @@ from collections import deque
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 from hmmlearn.hmm import GaussianHMM
-# WassersteinClusterer is defined in hybrid_regime_infer_v2.py
-# Import it from there for pickle compatibility
-from hybrid_regime_infer import WassersteinClusterer
+import hybrid_regime_infer as infer
+
+# WassersteinClusterer is defined in hybrid_regime_infer.py
+# Import via module alias for pickle compatibility.
+WassersteinClusterer = infer.WassersteinClusterer
 
 warnings.filterwarnings("ignore")
 
@@ -65,13 +67,14 @@ warnings.filterwarnings("ignore")
 # ======================================================
 # CONFIG
 # ======================================================
-CSV_FILE            = "data/nifty_futures_5min.csv"
+CSV_FILE            = "data/_data_NIFTY_2010_2026_5min.csv"
 ANNOTATION_FILE     = "data/regime_annotations.csv"   # optional; set to None to skip
 
 MODEL_FILE_HMM      = "data/regime_hmm.pkl"
 MODEL_FILE_WASS     = "data/regime_wasserstein.pkl"
 SCALER_FILE         = "data/regime_scaler.pkl"
 PCA_FILE            = "data/regime_pca.pkl"            # new artifact
+WASS_MAP_FILE       = "data/wass_cluster_map.pkl"
 
 N_CLUSTERS          = 4      # Trending-Up, Trending-Down, Range, Choppy
 REFIT_FREQ          = 50     # Wasserstein periodic refit cadence
@@ -109,47 +112,12 @@ print(f"✔︎  Loaded {len(df):,} bars  ({df.index.min()} → {df.index.max()})
 # ======================================================
 def compute_features(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Compute raw (unamplified) features.
-    Identical feature set to v1 minus the hardcoded multipliers.
-    Called by both trainer and inference — must stay in sync.
+    Delegate to inference module so train/infer feature logic is single-source.
     """
-    df = df.copy()
-
-    df["return"]      = np.log(df["close"] / df["close"].shift(1))
-    df["adx"]         = talib.ADX(df["high"], df["low"], df["close"], 7)
-    df["atr"]         = talib.ATR(df["high"], df["low"], df["close"], 14)
-    df["range_ratio"] = (df["high"] - df["low"]) / df["close"]
-
-    def _slope_r2(series: np.ndarray):
-        if len(series) < 14:
-            return np.nan, np.nan
-        x      = np.arange(14, dtype=float)
-        coeffs = np.polyfit(x, series[-14:], 1)
-        y_pred = np.polyval(coeffs, x)
-        ss_res = np.sum((series[-14:] - y_pred) ** 2)
-        ss_tot = np.sum((series[-14:] - series[-14:].mean()) ** 2)
-        r2     = 1.0 - ss_res / ss_tot if ss_tot > 1e-12 else 0.0
-        return coeffs[0], r2
-
-    df["slope"]    = (
-        df["close"].rolling(14).apply(lambda x: _slope_r2(x)[0], raw=False)
-        / df["close"].rolling(14).mean()
-    )
-    df["r2"]       = df["close"].rolling(14).apply(lambda x: _slope_r2(x)[1], raw=False)
-    df["range_vol"]= (df["high"] - df["low"]).rolling(14).mean() / df["close"].rolling(14).mean()
-    df["volatility"]= df["close"].pct_change().rolling(14).std()
-    df["atr_norm"] = df["atr"] / df["close"]
-
-    # ── NO amplifiers ──────────────────────────────────────────────────────────
-    # v1 had:  slope *= 2.0,  r2 *= 1.3,  adx *= 1.6
-    # These are removed. PCA whitening replaces them with a principled approach.
-
-    df = df.bfill().ffill().dropna()
-
-    return df[[
-        "return", "slope", "r2", "adx", "atr",
-        "range_ratio", "range_vol", "volatility", "atr_norm"
-    ]]
+    out = infer.compute_features(df)
+    if out is None:
+        raise RuntimeError("Insufficient rows after feature computation.")
+    return out
 
 
 features = compute_features(df)
@@ -195,12 +163,28 @@ def load_annotations(annotation_file: str, features_df: pd.DataFrame):
         print(f"⚠  Annotation file not found: {annotation_file}. Running unsupervised.")
         return None, None
 
-    ann["datetime_start"] = pd.to_datetime(ann["datetime_start"])
-    ann["datetime_end"]   = pd.to_datetime(ann["datetime_end"])
+    ann["datetime_start"] = pd.to_datetime(ann["datetime_start"], errors="coerce")
+    ann["datetime_end"]   = pd.to_datetime(ann["datetime_end"], errors="coerce")
     ann["confidence"]     = ann["confidence"].str.lower().map(CONFIDENCE_MAP).fillna(0.5)
 
     n = len(features_df)
     idx = features_df.index
+    idx_tz = getattr(idx, "tz", None)
+
+    # Align annotation timestamps to the feature index timezone to avoid
+    # tz-naive vs tz-aware comparison errors when building masks.
+    for col in ["datetime_start", "datetime_end"]:
+        if idx_tz is not None:
+            if ann[col].dt.tz is None:
+                ann[col] = ann[col].dt.tz_localize(idx_tz)
+            else:
+                ann[col] = ann[col].dt.tz_convert(idx_tz)
+        else:
+            if ann[col].dt.tz is not None:
+                ann[col] = ann[col].dt.tz_localize(None)
+
+    ann.dropna(subset=["datetime_start", "datetime_end"], inplace=True)
+
     sample_weights = np.ones(n, dtype=float)
     labeled_masks  = {"Trending": np.zeros(n, bool),
                       "Range":    np.zeros(n, bool),
@@ -308,6 +292,17 @@ clusterer.fit(distributions[-1000:])
 clusterer.summary()
 print("✔︎  Wasserstein centroids trained (multi-feature).")
 
+# Derive cluster→regime mapping from centroid ordering.
+# WassersteinClusterer sorts centroids by variance then mean (descending),
+# so cluster 0 always has the highest mean (bullish trending signature).
+# This mapping is saved so inference loads it rather than hardcoding it.
+_n_wass = len(clusterer.centroids)
+WASS_CLUSTER_TO_REGIME = {
+    i: ("Trending" if i == 0 else "Range" if i == 1 else "Choppy")
+    for i in range(_n_wass)
+}
+print(f"✔︎  Wasserstein cluster→regime mapping: {WASS_CLUSTER_TO_REGIME}")
+
 
 # ======================================================
 # HMM TRAINING WITH SUPERVISED ANCHORING  [FIX-4, FIX-5]
@@ -320,14 +315,20 @@ if anchor_means is not None:
     # We will provide means_ manually → tell hmmlearn to NOT init means.
     # "stc" = initialise startprob, transmat, covars (but not means).
     init_params = "stc"
-    means_init  = np.array([
-        anchor_means[r] if anchor_means[r] is not None
-        else X_pca[np.random.choice(len(X_pca), 50)].mean(axis=0)
-        for r in REGIME_ORDER
-    ])
+    means_init_list = []
+    for r in REGIME_ORDER:
+        # Transitional is often unlabeled; fall back to random centroid init.
+        m = anchor_means.get(r) if isinstance(anchor_means, dict) else None
+        if m is None:
+            m = X_pca[np.random.choice(len(X_pca), 50)].mean(axis=0)
+        means_init_list.append(m)
+    means_init = np.array(means_init_list)
     print(f"✔︎  Anchor means computed from labeled segments:")
     for i, r in enumerate(REGIME_ORDER):
-        n_labeled = labeled_masks[r].sum() if labeled_masks else 0
+        if labeled_masks and r in labeled_masks:
+            n_labeled = int(labeled_masks[r].sum())
+        else:
+            n_labeled = 0
         print(f"    State {i} ({r:10s}): {n_labeled} labeled bars  "
               f"  mean[:3] = {means_init[i, :3].round(3)}")
 else:
@@ -435,9 +436,9 @@ if anchor_means is not None and ANCHOR_ALPHA > 0.0:
 
     for pass_num in range(ANCHOR_EM_PASSES):
         for state_idx, regime in enumerate(REGIME_ORDER):
-            if anchor_means[regime] is None:
+            human_centroid = anchor_means.get(regime)
+            if human_centroid is None:
                 continue
-            human_centroid   = anchor_means[regime]
             current_mean     = hmmf.means_[state_idx]
             # Weighted blend: pull current mean (1-α) toward human anchor (α)
             hmmf.means_[state_idx] = (
@@ -476,11 +477,11 @@ print(pd.Series(pred_states).value_counts().sort_index())
 # Multi-feature state characterisation in the *original* (pre-PCA) space.
 # We use the original features DataFrame for interpretable means.
 state_profile = pd.DataFrame({
-    "mean_adx":       [features.loc[pred_states == i, "adx"].mean()       for i in range(N_CLUSTERS)],
-    "mean_r2":        [features.loc[pred_states == i, "r2"].mean()        for i in range(N_CLUSTERS)],
-    "mean_volatility":[features.loc[pred_states == i, "volatility"].mean() for i in range(N_CLUSTERS)],
-    "mean_range_vol": [features.loc[pred_states == i, "range_vol"].mean() for i in range(N_CLUSTERS)],
-    "mean_slope":     [features.loc[pred_states == i, "slope"].mean()     for i in range(N_CLUSTERS)],
+    "mean_adx":       [features.iloc[pred_states == i]["adx"].mean()        for i in range(N_CLUSTERS)],
+    "mean_r2":        [features.iloc[pred_states == i]["r2"].mean()         for i in range(N_CLUSTERS)],
+    "mean_volatility":[features.iloc[pred_states == i]["volatility"].mean() for i in range(N_CLUSTERS)],
+    "mean_range_vol": [features.iloc[pred_states == i]["range_vol"].mean()  for i in range(N_CLUSTERS)],
+    "mean_slope":     [features.iloc[pred_states == i]["slope"].mean()      for i in range(N_CLUSTERS)],
     "count":           np.bincount(pred_states),
 })
 
@@ -610,6 +611,7 @@ joblib.dump(hmmf,      MODEL_FILE_HMM)
 joblib.dump(clusterer, MODEL_FILE_WASS)
 joblib.dump(scaler,    SCALER_FILE)
 joblib.dump(pca,       PCA_FILE)
+joblib.dump(WASS_CLUSTER_TO_REGIME, WASS_MAP_FILE)
 
 # Save the derived mapping so inference doesn't need to recompute
 joblib.dump(STATE_TO_LABEL, "data/state_to_label.pkl")
@@ -619,6 +621,7 @@ print(f"    {MODEL_FILE_HMM}")
 print(f"    {MODEL_FILE_WASS}")
 print(f"    {SCALER_FILE}")
 print(f"    {PCA_FILE}")
+print(f"    {WASS_MAP_FILE}")
 print(f"    data/state_to_label.pkl")
 
 

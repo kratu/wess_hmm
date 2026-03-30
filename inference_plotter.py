@@ -45,7 +45,7 @@ now = datetime.now(IST)
 # --------------------------------------------------
 # Toggle between fixed test date and today's date
 USE_FIXED_DATE = True          # set to False for live runs
-DAYS_AGO = 2                  # how many days back for testing
+DAYS_AGO = 5                  # how many days back for testing
 
 if USE_FIXED_DATE:
     test_date = (now - timedelta(days=DAYS_AGO))
@@ -70,49 +70,24 @@ df = client.history(
     end_date=today,
 )
 
-# # --- Handle API returning dict instead of DataFrame ---
-# if isinstance(df, dict):
-#     # Extract candle data safely
-#     candles = df.get("data") or df.get("result", {}).get("data", [])
-#     if not candles:
-#         raise ValueError("No data from OpenAlgo. Ensure API key and symbol are correct.")
-#     df = pd.DataFrame(candles)
-
 if df is None:
-    raise RuntimeError(
-        f"No data from Open Algo({len(df)} possibly a market holiday)."
-    )
+    raise RuntimeError("No data from OpenAlgo (None response).")
 
-# If API returned dict, extract candles
+# If API returned dict, extract candles once.
 if isinstance(df, dict):
     candles = df.get("data") or df.get("result", {}).get("data", [])
-
     if not candles:
-        raise RuntimeError(
-            f"No data from OpenAlgo (0 candles) — possibly a market holiday."
-        )
-
+        raise RuntimeError("No data from OpenAlgo (0 candles) — possibly a market holiday.")
     df = pd.DataFrame(candles)
 
-
-elif len(df) > 0 and len(df) < 10:
+if len(df) > 0 and len(df) < 10:
     raise RuntimeError(
         f"[Hybrid] Insufficient raw bars for regime inference "
         f"({len(df)} bars). Likely early market hours."
     )
 
-# --- Handle API returning dict instead of DataFrame ---
-if isinstance(df, dict):
-    candles = df.get("data") or df.get("result", {}).get("data", [])
-    if not candles:
-        print(f"[Hybrid] No data from OpenAlgo. Ensure API_KEY is edited and SYMBOL are correct.")
-        raise RuntimeError(
-        "[Hybrid] No data from OpenAlgo. Check API_KEY, SYMBOL are correct."
-    )
-    df = pd.DataFrame(candles)
-
 # --- Empty or invalid data guard ---
-if df is None or df.empty:
+if df.empty:
     print(f"[Hybrid] Empty dataset for {SYMBOL} — exiting gracefully.")
     raise RuntimeError(f"[Hybrid] Empty dataset for {SYMBOL}.")
     #sys.exit(0)
@@ -150,8 +125,9 @@ assert infer.clusterer is not None, "Clusterer not loaded — check model paths.
 assert infer.hmmf is not None, "HMM model not loaded — check model paths."
 
 # --- Feature Computation ---
-features = infer.compute_features(df)
-features = features.reindex(df.index).dropna()
+features, X_std, X_pca = infer.prepare_inference_inputs(df)
+if features is None:
+    raise RuntimeError("[Hybrid] Feature computation failed.")
 df = df.loc[features.index]  # align both
 
 if len(features) < 20:
@@ -159,9 +135,6 @@ if len(features) < 20:
         f"[Hybrid] Only {len(features)} usable feature rows after indicator warm-up. "
         "Indicators not fully initialized yet."
     )
-
-X_std = np.clip(infer.scaler.transform(features), -3, 3)
-X_pca = infer.transform_features(features)
 
 if np.any(np.isnan(X_std)) or np.any(np.isnan(X_pca)):
     raise ValueError("NaN detected in scaled features — check input data integrity.")
@@ -245,8 +218,8 @@ colors = {
     "Mild-Uptrend": "lime",
     "Mild-Downtrend": "orange",
     "Range": "gold",
-    "Choppy": "gray",
-    "Transitional": "yellow",
+    "Choppy": "yellow",
+    "Transitional": "gray",
 }
 
 

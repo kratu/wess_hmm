@@ -116,21 +116,13 @@ def regime_inference():
     # --------------------------------------------------
     infer.load_models_once()
 
-    raw_features = infer.compute_features(df)
+    raw_features, X_std, X_pca = infer.prepare_inference_inputs(df)
 
     if raw_features is None or len(raw_features) < 10:
         print(f"[RegimeGuard] Not enough bars yet ({len(df)}). Waiting for more data.")
         return  # exit gracefully, scheduler will retry on next cycle
 
-    raw_features = raw_features.reindex(df.index).dropna()
     df = df.loc[raw_features.index]
-
-    # v2.1: apply the full StandardScaler → PCA pipeline via transform_features().
-    # X_std is also needed separately for the Wasserstein context (pre-PCA).
-    X_std = np.clip(infer.scaler.transform(raw_features), -4, 4)
-    X_pca = infer.transform_features(raw_features)
-
-    gov = infer.RegimeGovernor(min_hold=infer.MIN_HOLD_MIN)
 
     # v2.1: infer_regime_multiscale takes X_pca and X_std separately.
     # Wasserstein context is computed internally from X_std.
@@ -140,7 +132,7 @@ def regime_inference():
         X_std     = X_std,
         df_index  = df.index,
         model     = infer.hmmf,
-        governor  = gov,
+        governor  = regime_governor,
         clusterer = infer.clusterer,
     )
 
@@ -185,6 +177,28 @@ def regime_inference():
 
 # CORE STRATEGY ---------------------------------------------------------------------------------
 
+def normalize_regime_label(reg):
+    """
+    Convert either RegimeState or legacy string label into a comparable string.
+    """
+    if hasattr(reg, "cls"):
+        if reg.cls == "Trending":
+            if reg.direction == "Down":
+                return "Trending-Down"
+            if reg.direction == "Up":
+                return "Trending-Up"
+            return "Trending"
+        if reg.cls == "Range":
+            if reg.direction == "Up":
+                return "Mild-Uptrend"
+            if reg.direction == "Down":
+                return "Mild-Downtrend"
+            return "Range"
+        if reg.cls in ("Choppy", "Transitional"):
+            return reg.cls
+        return "Unknown"
+    return str(reg)
+
 def core_step():
     """
     Core step function to be scheduled periodically.
@@ -192,37 +206,38 @@ def core_step():
     global latest_regime
 
     print(f"\n[Hybrid Regime Inference] Running core step at {datetime.now(IST).strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"\nLatest regime: {latest_regime}")
+    latest_label = normalize_regime_label(latest_regime)
+    print(f"\nLatest regime: {latest_label}")
     print("⎯" * 100)
 
     # ---- TREND REGIMES (direction-agnostic at gate level) ----
-    if latest_regime in ("Trending", "Trending-Down"):
-        msg = f"Regime : {latest_regime} → proceed with trend strategy"
+    if latest_label in ("Trending", "Trending-Up", "Trending-Down"):
+        msg = f"Regime : {latest_label} → proceed with trend strategy"
         print(msg)
-        # trend_strategy(direction="down" if latest_regime.endswith("Down") else "up")
+        # trend_strategy(direction="down" if latest_label.endswith("Down") else "up")
         return
 
     # ---- TRANSITIONAL (explicit block) ----
-    elif latest_regime == "Transitional":
+    elif latest_label == "Transitional":
         msg = "Regime : Transitional → halt (no new risk)"
         print(msg)
         return
 
     # ---- RANGE / MILD TREND ----
-    elif latest_regime in ("Range", "Mild-Uptrend", "Mild-Downtrend"):
-        msg = f"Regime : {latest_regime} → proceed with range / mean-reversion strategy"
+    elif latest_label in ("Range", "Mild-Uptrend", "Mild-Downtrend"):
+        msg = f"Regime : {latest_label} → proceed with range / mean-reversion strategy"
         print(msg)
         return
 
     # ---- CHOPPY ----
-    elif latest_regime == "Choppy":
+    elif latest_label == "Choppy":
         msg = "Regime : Choppy → skip / hold"
         print(msg)
         return
 
     # ---- FALLBACK ----
-    elif latest_regime == "Unknown":
-        msg = f"Unknown regime label: {latest_regime} → default hold"
+    elif latest_label == "Unknown":
+        msg = f"Unknown regime label: {latest_label} → default hold"
         print(msg)
         return
 
