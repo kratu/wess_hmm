@@ -45,7 +45,7 @@ now = datetime.now(IST)
 # --------------------------------------------------
 # Toggle between fixed test date and today's date
 USE_FIXED_DATE = True          # set to False for live runs
-DAYS_AGO = 5                  # how many days back for testing
+DAYS_AGO = 7                  # how many days back for testing
 
 if USE_FIXED_DATE:
     test_date = (now - timedelta(days=DAYS_AGO))

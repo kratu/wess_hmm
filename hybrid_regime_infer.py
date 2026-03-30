@@ -421,6 +421,27 @@ def _regime_key(label):
         return (label.cls, label.direction)
     return str(label)
 
+
+def _suppress_single_bar_directional_blips(labels: list) -> list:
+    """
+    Merge isolated one-bar directional flips into the surrounding direction.
+    Example: Down, Up, Down -> Down, Down, Down.
+    """
+    if len(labels) < 3:
+        return labels
+
+    directional = {"Trending-Up", "Trending-Down", "Mild-Uptrend", "Mild-Downtrend"}
+    out = list(labels)
+    for i in range(1, len(labels) - 1):
+        prev_lbl = labels[i - 1]
+        cur_lbl = labels[i]
+        next_lbl = labels[i + 1]
+        if prev_lbl == next_lbl and cur_lbl != prev_lbl:
+            if prev_lbl in directional and cur_lbl in directional:
+                out[i] = prev_lbl
+    return out
+
+
 def summarize_regime_periods(df, label_col="RegimeLabel"):
     if label_col not in df.columns:
         return []
@@ -592,6 +613,9 @@ def infer_regime_multiscale(
             final_label = "Trending-Up" if trend_up else "Trending-Down"
 
         final_labels.append(final_label)
+
+    # Suppress noisy one-bar direction flips inside broader directional runs.
+    final_labels = _suppress_single_bar_directional_blips(final_labels)
 
     # ── Option B: structured output ───────────────────────────────────────────
     if ENABLE_STRUCTURED_REGIME:
