@@ -143,3 +143,9 @@ region. Targeted for the next training iteration.
 ---
 
 *Training data: NIFTY Futures 5-min · 2015-03-02 → 2022-10-13 · 106,355 bars*
+
+## 30 March, 2026
+
+Retrained the model with larger data (2010-2026). And tuned the inference to focus on evaluating range/choppy regimes. Now, it should have more accurate inference of these regimes. 
+
+At this point, the unsupervised learning is hitting a limit. So, I’ve also added an annotation tool that helps in supervised or human-assisted training.  In the future, I might add annotations to infer accurately.

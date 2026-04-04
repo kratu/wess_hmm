@@ -6,7 +6,7 @@ HMM + Wasserstein hybrid model on live or recent data.
 --------------------------------------------
 """
 
-import os, sys
+import os
 import time
 import numpy as np
 import pandas as pd
@@ -19,7 +19,7 @@ from pytz import timezone
 # --------------------------------------------------
 from openalgo import api
 from config import API_KEY, API_HOST
-import importlib, hybrid_regime_infer as infer  # ← use module namespace directly
+import hybrid_regime_infer as infer  # ← use module namespace directly
 # Diagnostic: confirm which file Python actually loaded
 print(f"[MODULE] hybrid_regime_infer loaded from: {infer.__file__}")
 if not hasattr(infer, 'summarize_regime_periods'):
@@ -35,7 +35,7 @@ if not hasattr(infer, 'summarize_regime_periods'):
 # --------------------------------------------------
 IST = timezone("Asia/Kolkata")
 client = api(api_key=API_KEY, host=API_HOST)
-SYMBOL = "NIFTY30MAR26FUT"
+SYMBOL = "NIFTY28APR26FUT"
 TIMEFRAME = "5m"
 now = datetime.now(IST)
 #today = datetime.now(IST).strftime("%Y-%m-%d")
@@ -86,11 +86,12 @@ if len(df) > 0 and len(df) < 10:
         f"({len(df)} bars). Likely early market hours."
     )
 
+
 # --- Empty or invalid data guard ---
 if df.empty:
     print(f"[Hybrid] Empty dataset for {SYMBOL} — exiting gracefully.")
     raise RuntimeError(f"[Hybrid] Empty dataset for {SYMBOL}.")
-    #sys.exit(0)
+    
 
 # --------------------------------------------------
 # DATA NORMALIZATION
@@ -233,7 +234,7 @@ plt.figure(figsize=(18, 6))
 plt.plot(df.index, df["close"], color="black", lw=1, alpha=0.6, label="Close")
 plt.plot(df.index, df["vwap"], "--", lw=1.2, color="gray", alpha=0.8, label="VWAP")
 
-# Regime scatter overlay
+
 # Regime scatter overlay
 df["_reg_label"] = df["RegimeLabel"].apply(regime_to_label)
 

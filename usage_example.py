@@ -50,7 +50,7 @@ latest_regime = "Unknown" #Default initial regime
 # Persistent regime governor (IMPORTANT)
 regime_governor = infer.RegimeGovernor(min_hold=infer.MIN_HOLD_MIN)
 
-SYMBOL = "NIFTY30MAR26FUT"
+SYMBOL = "NIFTY28APR26FUT"
 IST = timezone("Asia/Kolkata")
 TIMEFRAME = "5m"
 
