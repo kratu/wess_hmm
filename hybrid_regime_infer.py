@@ -441,6 +441,114 @@ def _suppress_single_bar_directional_blips(labels: list) -> list:
                 out[i] = prev_lbl
     return out
 
+def _enforce_trending_minimum_duration(
+    labels: list,
+    df_index,
+    min_trending_minutes: float = 15.0,
+    target_class: str = "Transitional",
+) -> list:
+    """
+    Demote short same-direction Trending-Up / Trending-Down runs only when
+    there is counter-direction evidence inside the same directional cluster.
+
+    Additional heuristic:
+      - If a full directional cluster is entirely short and has 3..5 flips,
+        classify it as Range.
+
+    Duration is timestamp-based with inferred bar width; this keeps behavior
+    consistent across 1m, 1m->3m resampled, and 5m flows.
+    """
+    _target_map = {"choppy": "Choppy", "transitional": "Transitional"}
+    _target_key = str(target_class).strip().lower()
+    if _target_key not in _target_map:
+        raise ValueError(
+            f"target_class must be 'Choppy' or 'Transitional', got {target_class!r}"
+        )
+    target_class = _target_map[_target_key]
+
+    directional = {"Trending-Up", "Trending-Down"}
+    out = list(labels)
+    n = len(labels)
+
+    if n == 0:
+        return out
+
+    bar_width = 1.0
+    if df_index is not None and len(df_index) >= 2:
+        deltas = []
+        sample_n = min(20, len(df_index) - 1)
+        for i in range(sample_n):
+            try:
+                delta_min = (df_index[i + 1] - df_index[i]).total_seconds() / 60.0
+            except Exception:
+                continue
+            if delta_min > 0:
+                deltas.append(delta_min)
+        if deltas:
+            bar_width = float(np.median(deltas))
+
+    def _duration_min(start_i: int, end_i_exclusive: int) -> float:
+        duration = (end_i_exclusive - start_i) * bar_width
+        if df_index is not None and end_i_exclusive <= len(df_index):
+            try:
+                duration = (
+                    (df_index[end_i_exclusive - 1] - df_index[start_i]).total_seconds() / 60.0
+                    + bar_width
+                )
+            except Exception:
+                pass
+        return max(bar_width, float(duration))
+
+    i = 0
+    while i < n:
+        if labels[i] not in directional:
+            i += 1
+            continue
+
+        c_start = i
+        while i < n and labels[i] in directional:
+            i += 1
+        c_end = i
+
+        runs = []
+        r_start = c_start
+        r_label = labels[c_start]
+        j = c_start + 1
+        while j <= c_end:
+            if j == c_end or labels[j] != r_label:
+                runs.append(
+                    {
+                        "start": r_start,
+                        "end": j,
+                        "label": r_label,
+                        "duration_min": _duration_min(r_start, j),
+                    }
+                )
+                if j < c_end:
+                    r_start = j
+                    r_label = labels[j]
+            j += 1
+
+        run_dirs = {r["label"] for r in runs}
+        if len(run_dirs) < 2:
+            continue
+
+        short_runs = [r for r in runs if r["duration_min"] < min_trending_minutes]
+        short_dirs = {r["label"] for r in short_runs}
+
+        if len(short_runs) < 2 or len(short_dirs) < 2:
+            continue
+
+        flip_count = max(0, len(runs) - 1)
+        all_short = len(short_runs) == len(runs)
+        replacement = "Range" if (all_short and 3 <= flip_count <= 5) else target_class
+
+        for r in short_runs:
+            for k in range(r["start"], r["end"]):
+                out[k] = replacement
+
+    return out
+
 
 def summarize_regime_periods(df, label_col="RegimeLabel"):
     if label_col not in df.columns:
@@ -616,6 +724,12 @@ def infer_regime_multiscale(
 
     # Suppress noisy one-bar direction flips inside broader directional runs.
     final_labels = _suppress_single_bar_directional_blips(final_labels)
+    final_labels = _enforce_trending_minimum_duration(
+        final_labels,
+        df_index,
+        min_trending_minutes=15.0,
+        target_class="Transitional",
+    )
 
     # ── Option B: structured output ───────────────────────────────────────────
     if ENABLE_STRUCTURED_REGIME:

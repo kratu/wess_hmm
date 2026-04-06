@@ -11,8 +11,11 @@ import time
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 from datetime import datetime, timedelta, time as dtime
 from pytz import timezone
+from matplotlib.patches import Rectangle
+from matplotlib.lines import Line2D
 
 # --------------------------------------------------
 # INTERNAL IMPORTS
@@ -224,49 +227,98 @@ colors = {
 }
 
 
+def plot_candles(ax, ohlc_df: pd.DataFrame, width_frac: float = 0.65):
+    """
+    Lightweight candlestick renderer using plain Matplotlib.
+    Avoids external dependencies (e.g., mplfinance).
+    """
+    if ohlc_df.empty:
+        return
+
+    x = mdates.date2num(ohlc_df.index.to_pydatetime())
+    if len(x) >= 2:
+        spacing = float(np.median(np.diff(x)))
+    else:
+        spacing = 1.0 / (24 * 60)  # ~1 minute fallback in day units
+    body_w = spacing * width_frac
+
+    candle_color = "#6f6f6f"
+    median_range = float((ohlc_df["high"] - ohlc_df["low"]).median()) if len(ohlc_df) else 0.0
+    min_body = max(0.05, median_range * 0.05)
+
+    for xi, o, h, l, c in zip(
+        x,
+        ohlc_df["open"].to_numpy(dtype=float),
+        ohlc_df["high"].to_numpy(dtype=float),
+        ohlc_df["low"].to_numpy(dtype=float),
+        ohlc_df["close"].to_numpy(dtype=float),
+    ):
+        # Wick
+        ax.vlines(xi, l, h, color=candle_color, linewidth=1.0, alpha=0.85, zorder=2)
+
+        # Body
+        lower = min(o, c)
+        height = max(abs(c - o), min_body)
+        ax.add_patch(
+            Rectangle(
+                (xi - body_w / 2.0, lower),
+                body_w,
+                height,
+                facecolor=candle_color,
+                edgecolor=candle_color,
+                linewidth=0.8,
+                alpha=0.85,
+                zorder=3,
+            )
+        )
+
+    ax.xaxis_date()
+
 # VWAP overlay
 df["vwap"] = (
     (df["volume"] * (df["high"] + df["low"] + df["close"]) / 3).cumsum()
     / df["volume"].cumsum()
 )
 
-plt.figure(figsize=(18, 6))
-plt.plot(df.index, df["close"], color="black", lw=1, alpha=0.6, label="Close")
-plt.plot(df.index, df["vwap"], "--", lw=1.2, color="gray", alpha=0.8, label="VWAP")
-
+fig, ax = plt.subplots(figsize=(18, 6))
+plot_candles(ax, df)
+vwap_line, = ax.plot(df.index, df["vwap"], "--", lw=1.2, color="gray", alpha=0.9, label="VWAP")
 
 # Regime scatter overlay
 df["_reg_label"] = df["RegimeLabel"].apply(regime_to_label)
 
 used_labels = set()   # MUST be a set
+legend_handles = [Line2D([0], [0], color="#666666", lw=1.2, label="Candles"), vwap_line]
 
 for reg, c in colors.items():
     subset = df[df["_reg_label"] == reg]
     if subset.empty:
         continue
 
-    label = reg if reg not in used_labels else None
-
-    plt.scatter(
+    sc = ax.scatter(
         subset.index,
         subset["close"],
         s=14,
         c=c,
-        label=label,
+        label=reg,
         alpha=0.85,
+        zorder=4,
     )
 
+    if reg not in used_labels:
+        legend_handles.append(sc)
     used_labels.add(reg)
 
 # Subtle background spans for segment visibility
 for start, end, label in segments:
     lbl = regime_to_label(label)
-    plt.axvspan(start, end, color=colors.get(lbl, "gray"), alpha=0.05)
+    ax.axvspan(start, end, color=colors.get(lbl, "gray"), alpha=0.05, zorder=0)
 
-
-plt.legend(loc="upper left")
-plt.title(f"Hybrid Regime Inference — {today}", fontsize=13)
-plt.grid(ls="--", alpha=0.3)
+ax.legend(handles=legend_handles, loc="upper left")
+ax.set_title(f"Hybrid Regime Inference — {today}", fontsize=13)
+ax.grid(ls="--", alpha=0.3)
+ax.xaxis.set_major_formatter(mdates.DateFormatter("%d %H:%M"))
+fig.autofmt_xdate()
 plt.tight_layout()
 plt.show()
 
