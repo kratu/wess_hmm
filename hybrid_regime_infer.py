@@ -53,6 +53,7 @@ License: Apache 2.0
 """
 
 import sys
+import logging
 import joblib
 import numpy as np
 import pandas as pd
@@ -67,6 +68,10 @@ from sklearn.decomposition import PCA
 from hmmlearn.hmm import GaussianHMM
 from dataclasses import dataclass
 from typing import Literal, Optional
+
+# Pickle compatibility: older artifacts were serialized with module path
+# "hybrid_regime_infer" (without "intelligence." prefix).
+sys.modules.setdefault("hybrid_regime_infer", sys.modules[__name__])
 
 # --------------------------------------------------
 # CONFIG
@@ -94,6 +99,7 @@ _FALLBACK_WASS_CLUSTER_TO_REGIME = {0: "Trending", 1: "Range", 2: "Choppy", 3: "
 
 MIN_HOLD_MIN = 20
 IST          = timezone("Asia/Kolkata")
+_log         = logging.getLogger(__name__)
 
 # Post-fusion tuning (kept conservative for cross-day stability)
 RANGE_SLOPE_Z_CAP                 = 0.45
@@ -111,6 +117,7 @@ HMM_TREND_LOCK_RETZ_SUM_THR       = 0.95
 CHOPPY_DEMOTE_WEAK_CONF_MAX       = 0.60
 CHOPPY_DEMOTE_WEAK_SLOPE_Z_MAX    = 0.12
 CHOPPY_DEMOTE_WEAK_RETZ_SUM_MAX   = 0.70
+FEATURE_Z_CLIP                    = 4.0
 
 # Option B: structured regime output
 ENABLE_STRUCTURED_REGIME = True
@@ -134,6 +141,7 @@ class RegimeState:
     cls:        Literal["Trending", "Range", "Choppy", "Transitional"]
     direction:  Literal["Up", "Down", "Neutral"]
     confidence: Optional[float] = None
+    bias:       Optional[Literal["Up", "Down", "Neutral"]] = None
 
 
 # --------------------------------------------------
@@ -157,28 +165,28 @@ def load_models_once():
             pca = joblib.load(PCA_FILE)
         else:
             pca = None
-            print("⚠  PCA artifact not found — running without PCA whitening.")
-            print("   Re-run hybrid_wes_hmm_trainer.py to generate data/regime_pca.pkl")
+            _log.warning("PCA artifact not found — running without PCA whitening. "
+                         "Re-run hybrid_wes_hmm_trainer.py to generate data/regime_pca.pkl")
 
         # Load derived HMM state→label mapping
         if os.path.exists(STATE_MAP_FILE):
             STATE_TO_LABEL = joblib.load(STATE_MAP_FILE)
         else:
             STATE_TO_LABEL = _FALLBACK_STATE_TO_LABEL
-            print("⚠  state_to_label.pkl not found — using fallback mapping.")
+            _log.warning("state_to_label.pkl not found — using fallback mapping.")
 
         # Load derived Wasserstein cluster→regime mapping
         if os.path.exists(WASS_MAP_FILE):
             WASS_CLUSTER_TO_REGIME = joblib.load(WASS_MAP_FILE)
         else:
             WASS_CLUSTER_TO_REGIME = _FALLBACK_WASS_CLUSTER_TO_REGIME
-            print("⚠  wass_cluster_map.pkl not found — using fallback Wasserstein mapping.")
-            print("   Re-run hybrid_wes_hmm_trainer.py to generate data/wass_cluster_map.pkl")
+            _log.warning("wass_cluster_map.pkl not found — using fallback Wasserstein mapping. "
+                         "Re-run hybrid_wes_hmm_trainer.py to generate data/wass_cluster_map.pkl")
 
         _models_loaded = True
-        print(f"✲✦▾  Models loaded. State mapping: {STATE_TO_LABEL}")
-        print(f"     Wasserstein mapping: {WASS_CLUSTER_TO_REGIME}")
-        print(f"     [v2.1 — slope normalised by price, 4-state HMM, loaded from: {os.path.abspath(MODEL_FILE_HMM)}]")
+        _log.info("Models loaded. State mapping: %s | Wasserstein mapping: %s | "
+                  "v2.1 — slope normalised by price, 4-state HMM, loaded from: %s",
+                  STATE_TO_LABEL, WASS_CLUSTER_TO_REGIME, os.path.abspath(MODEL_FILE_HMM))
 
 
 # --------------------------------------------------
@@ -233,31 +241,60 @@ def _rolling_slope_r2(close: pd.Series, window: int = 14):
 def compute_features(df: pd.DataFrame) -> Optional[pd.DataFrame]:
     """
     Compute raw (unamplified) features.
-    Matches hybrid_wes_hmm_trainer_v2.py exactly — no amplifiers.
+    Core formulas match hybrid_wes_hmm_trainer.py; inference additionally
+    applies causal cold-start imputation so opening-session bars are retained.
     """
     df = df.copy()
-
-    df["return"]      = np.log(df["close"] / df["close"].shift(1))
-    df["adx"]         = talib.ADX(df["high"], df["low"], df["close"], 7)
-    df["atr"]         = talib.ATR(df["high"], df["low"], df["close"], 14)
-    df["range_ratio"] = (df["high"] - df["low"]) / df["close"]
-
-    df["slope"], df["r2"] = _rolling_slope_r2(df["close"], window=14)
-    df["range_vol"] = (df["high"] - df["low"]).rolling(14).mean() / df["close"].rolling(14).mean()
-    df["volatility"]= df["close"].pct_change().rolling(14).std()
-    df["atr_norm"]  = df["atr"] / df["close"]
-
-    # Forward-fill only to avoid look-ahead leakage from future rows.
-    df = df.ffill().dropna()
-
-    if len(df) < 10:
-        print(f"⚠  Insufficient rows after feature computation ({len(df)}).")
+    if df.empty:
         return None
 
-    return df[[
+    close = df["close"].astype(float)
+    high = df["high"].astype(float)
+    low = df["low"].astype(float)
+
+    df["return"] = np.log(close / close.shift(1))
+    df["adx"] = talib.ADX(high, low, close, 7)
+    df["atr"] = talib.ATR(high, low, close, 14)
+    df["range_ratio"] = (high - low) / close
+
+    df["slope"], df["r2"] = _rolling_slope_r2(df["close"], window=14)
+    df["range_vol"] = (high - low).rolling(14, min_periods=1).mean() / close.rolling(14, min_periods=1).mean()
+    df["volatility"] = close.pct_change().rolling(14, min_periods=2).std()
+
+    # Cold-start ATR fallback keeps leading rows inferable without future leakage.
+    prev_close = close.shift(1)
+    tr = pd.concat(
+        [
+            high - low,
+            (high - prev_close).abs(),
+            (low - prev_close).abs(),
+        ],
+        axis=1,
+    ).max(axis=1)
+    atr_fallback = tr.ewm(alpha=1.0 / 14.0, adjust=False, min_periods=1).mean()
+    df["atr"] = df["atr"].fillna(atr_fallback)
+    df["atr_norm"] = df["atr"] / close
+
+    feature_cols = [
         "return", "slope", "r2", "adx", "atr",
         "range_ratio", "range_vol", "volatility", "atr_norm"
-    ]]
+    ]
+    feats = df[feature_cols].replace([np.inf, -np.inf], np.nan)
+
+    # Keep full-session index coverage (09:15 onward) with causal fills only.
+    feats["return"] = feats["return"].fillna(0.0)
+    feats["slope"] = feats["slope"].fillna(0.0)
+    feats["r2"] = feats["r2"].fillna(0.0)
+    feats["adx"] = feats["adx"].ffill().fillna(0.0)
+    feats["atr"] = feats["atr"].ffill().fillna(0.0)
+    feats["range_ratio"] = feats["range_ratio"].ffill().fillna(0.0)
+    feats["range_vol"] = feats["range_vol"].ffill().fillna(0.0)
+    feats["volatility"] = feats["volatility"].fillna(0.0)
+    feats["atr_norm"] = feats["atr_norm"].ffill().fillna(0.0)
+
+    if feats.empty:
+        return None
+    return feats
 
 
 # Feature column order must match the order used during training.
@@ -283,6 +320,7 @@ def transform_features(raw_features) -> np.ndarray:
         raw_features = pd.DataFrame(raw_features, columns=_FEATURE_COLS)
 
     X_std = scaler.transform(raw_features)
+    X_std = np.clip(X_std, -FEATURE_Z_CLIP, FEATURE_Z_CLIP)
 
     if pca is not None:
         X_out = pca.transform(X_std)
@@ -301,6 +339,7 @@ def prepare_inference_inputs(df: pd.DataFrame):
     if raw_features is None or raw_features.empty:
         return None, None, None
     X_std = scaler.transform(raw_features)
+    X_std = np.clip(X_std, -FEATURE_Z_CLIP, FEATURE_Z_CLIP)
     X_pca = transform_features(raw_features)
     return raw_features, X_std, X_pca
 
@@ -421,7 +460,6 @@ def _regime_key(label):
         return (label.cls, label.direction)
     return str(label)
 
-
 def _suppress_single_bar_directional_blips(labels: list) -> list:
     """
     Merge isolated one-bar directional flips into the surrounding direction.
@@ -441,19 +479,26 @@ def _suppress_single_bar_directional_blips(labels: list) -> list:
                 out[i] = prev_lbl
     return out
 
+
 def _enforce_trending_minimum_duration(
     labels: list,
     df_index,
     min_trending_minutes: float = 15.0,
     target_class: str = "Transitional",
+    slope_z_series=None,
+    adx_z_series=None,
+    ret_z_sum_series=None,
+    hmm_conf_series=None,
 ) -> list:
     """
     Demote short same-direction Trending-Up / Trending-Down runs only when
     there is counter-direction evidence inside the same directional cluster.
 
-    Additional heuristic:
+    Additional heuristics:
       - If a full directional cluster is entirely short and has 3..5 flips,
         classify it as Range.
+      - Preserve short runs with strong impulse evidence (confidence + momentum)
+        to avoid suppressing genuine sharp moves.
 
     Duration is timestamp-based with inferred bar width; this keeps behavior
     consistent across 1m, 1m->3m resampled, and 5m flows.
@@ -473,6 +518,21 @@ def _enforce_trending_minimum_duration(
     if n == 0:
         return out
 
+    def _as_series(values):
+        if values is None:
+            return None
+        try:
+            arr = np.asarray(values, dtype=float).reshape(-1)
+        except Exception:
+            return None
+        return arr if len(arr) >= n else None
+
+    slope_arr = _as_series(slope_z_series)
+    adx_arr = _as_series(adx_z_series)
+    retz_arr = _as_series(ret_z_sum_series)
+    conf_arr = _as_series(hmm_conf_series)
+
+    # Infer bar width from the median of the first few positive timestamp deltas.
     bar_width = 1.0
     if df_index is not None and len(df_index) >= 2:
         deltas = []
@@ -487,7 +547,21 @@ def _enforce_trending_minimum_duration(
         if deltas:
             bar_width = float(np.median(deltas))
 
+    # Adaptive minimum trend duration: 10–15m based on recent noise.
+    base_min = float(min_trending_minutes)
+    floor_min = 10.0
+    cap_min = max(floor_min, base_min)
+    effective_min = cap_min
+    if n >= 3:
+        recent_w = min(36, n)
+        recent = labels[-recent_w:]
+        unstable_frac = sum(1 for lbl in recent if lbl in ("Choppy", "Transitional")) / max(1, recent_w)
+        flip_density = sum(1 for a, b in zip(recent, recent[1:]) if a != b) / max(1, recent_w - 1)
+        noise_score = max(0.0, min(1.0, 0.60 * unstable_frac + 0.40 * flip_density))
+        effective_min = floor_min + (cap_min - floor_min) * noise_score
+
     def _duration_min(start_i: int, end_i_exclusive: int) -> float:
+        # Duration = (last_bar_start - first_bar_start) + bar_width.
         duration = (end_i_exclusive - start_i) * bar_width
         if df_index is not None and end_i_exclusive <= len(df_index):
             try:
@@ -499,17 +573,51 @@ def _enforce_trending_minimum_duration(
                 pass
         return max(bar_width, float(duration))
 
+    def _is_impulse_run(start_i: int, end_i_exclusive: int) -> bool:
+        """
+        Preserve short runs when momentum and confidence are sufficiently strong.
+        Uses existing model-space signals computed during fusion.
+        """
+        if any(arr is None for arr in (slope_arr, adx_arr, retz_arr, conf_arr)):
+            return False
+
+        s = slice(start_i, end_i_exclusive)
+        peak_conf = float(np.nanmax(conf_arr[s]))
+        peak_abs_retz = float(np.nanmax(np.abs(retz_arr[s])))
+        peak_abs_slope = float(np.nanmax(np.abs(slope_arr[s])))
+        peak_adx = float(np.nanmax(adx_arr[s]))
+
+        lock_like_impulse = (
+            peak_conf >= HMM_TREND_LOCK_CONF_THR
+            and (
+                peak_abs_retz >= HMM_TREND_LOCK_RETZ_SUM_THR
+                or (
+                    peak_abs_slope >= HMM_TREND_LOCK_SLOPE_Z_THR
+                    and peak_adx >= 0.10
+                )
+            )
+        )
+
+        strong_tape_drive = (
+            peak_abs_retz >= (HMM_TREND_LOCK_RETZ_SUM_THR * 1.35)
+            and peak_abs_slope >= (HMM_TREND_LOCK_SLOPE_Z_THR * 0.85)
+        )
+
+        return bool(lock_like_impulse or strong_tape_drive)
+
     i = 0
     while i < n:
         if labels[i] not in directional:
             i += 1
             continue
 
+        # Directional cluster: contiguous bars that are all Trending-Up/Down.
         c_start = i
         while i < n and labels[i] in directional:
             i += 1
         c_end = i
 
+        # Build same-direction sub-runs inside cluster.
         runs = []
         r_start = c_start
         r_label = labels[c_start]
@@ -529,26 +637,31 @@ def _enforce_trending_minimum_duration(
                     r_label = labels[j]
             j += 1
 
+        # Require counter-direction evidence inside this directional cluster.
         run_dirs = {r["label"] for r in runs}
         if len(run_dirs) < 2:
             continue
 
-        short_runs = [r for r in runs if r["duration_min"] < min_trending_minutes]
-        short_dirs = {r["label"] for r in short_runs}
+        short_runs = [r for r in runs if r["duration_min"] < effective_min]
+        demotable_runs = [
+            r for r in short_runs
+            if not _is_impulse_run(r["start"], r["end"])
+        ]
+        demotable_dirs = {r["label"] for r in demotable_runs}
 
-        if len(short_runs) < 2 or len(short_dirs) < 2:
+        # Apply only if there are short runs in both directions.
+        if len(demotable_runs) < 2 or len(demotable_dirs) < 2:
             continue
 
         flip_count = max(0, len(runs) - 1)
-        all_short = len(short_runs) == len(runs)
-        replacement = "Range" if (all_short and 3 <= flip_count <= 5) else target_class
+        all_short_demotable = len(demotable_runs) == len(runs)
+        replacement = "Range" if (all_short_demotable and 3 <= flip_count <= 5) else target_class
 
-        for r in short_runs:
+        for r in demotable_runs:
             for k in range(r["start"], r["end"]):
                 out[k] = replacement
 
     return out
-
 
 def summarize_regime_periods(df, label_col="RegimeLabel"):
     if label_col not in df.columns:
@@ -594,7 +707,7 @@ def infer_regime_multiscale(
 
     # ── [FIX-1] Full-sequence posterior computation ───────────────────────────
     # Returns shape (N, n_components) — posterior P(state_t | all observations)
-    _log_prob, posteriors_raw = model.score_samples(X_pca)
+    _, posteriors_raw = model.score_samples(X_pca)
 
     # Normalise each row (should already sum to 1, but numerical safety)
     posteriors_raw = posteriors_raw / (posteriors_raw.sum(axis=1, keepdims=True) + 1e-9)
@@ -640,6 +753,10 @@ def infer_regime_multiscale(
 
     # ── Per-bar fusion ────────────────────────────────────────────────────────
     final_labels = []
+    slope_z_series = np.zeros(n, dtype=float)
+    adx_z_series = np.zeros(n, dtype=float)
+    ret_z_sum_series = np.zeros(n, dtype=float)
+    hmm_conf_series = np.zeros(n, dtype=float)
     for i in range(n):
         local = [regimes_by_window[w][i] for w in windows]
         hmm_label = fusion_governor.decide_multiscale(local, df_index[i])
@@ -652,6 +769,10 @@ def infer_regime_multiscale(
         ret_start = max(0, i - DOWN_DRIFT_LOOKBACK_BARS + 1)
         ret_z_sum = float(np.sum(X_std[ret_start:i + 1, 0]))
         hmm_conf = float(np.max(post_smooth[i]))
+        slope_z_series[i] = slope_z
+        adx_z_series[i] = adx_z
+        ret_z_sum_series[i] = ret_z_sum
+        hmm_conf_series[i] = hmm_conf
 
         trend_up = slope_z >= 0
         if abs(ret_z_sum) >= DIRECTION_RETZ_DOMINANCE_THR:
@@ -728,7 +849,11 @@ def infer_regime_multiscale(
         final_labels,
         df_index,
         min_trending_minutes=15.0,
-        target_class="Transitional",
+        target_class="Choppy",
+        slope_z_series=slope_z_series,
+        adx_z_series=adx_z_series,
+        ret_z_sum_series=ret_z_sum_series,
+        hmm_conf_series=hmm_conf_series,
     )
 
     # ── Option B: structured output ───────────────────────────────────────────
@@ -741,9 +866,9 @@ def infer_regime_multiscale(
             elif label == "Trending-Down":
                 s = RegimeState("Trending",     "Down",    conf)
             elif label == "Mild-Uptrend":
-                s = RegimeState("Range",        "Up",      conf)
+                s = RegimeState("Range",        "Neutral", conf, bias="Up")
             elif label == "Mild-Downtrend":
-                s = RegimeState("Range",        "Down",    conf)
+                s = RegimeState("Range",        "Neutral", conf, bias="Down")
             elif label in ("Range", "Choppy", "Transitional"):
                 s = RegimeState(label,          "Neutral", conf)
             else:
@@ -782,10 +907,10 @@ def infer_hybrid_regime_for_live_data(df: pd.DataFrame, min_hold: int = MIN_HOLD
     # Normalised slope should be ~1e-5 scale, not ~0.1-1.0 scale
     _slope_sample = raw_features["slope"].iloc[-1]
     if abs(_slope_sample) > 0.01:
-        print(f"  ⚠  SLOPE NOT NORMALISED: slope[-1]={_slope_sample:.4f} (expected ~1e-5)")
-        print(f"     Check that hybrid_regime_infer.py has slope / rolling_mean fix.")
+        _log.warning("SLOPE NOT NORMALISED: slope[-1]=%.4f (expected ~1e-5) — "
+                     "check hybrid_regime_infer.py has slope / rolling_mean fix.", _slope_sample)
     else:
-        print(f"  ✔  slope[-1]={_slope_sample:.6f} (normalised ✓)")
+        _log.debug("slope[-1]=%.6f (normalised)", _slope_sample)
 
     gov    = RegimeGovernor(min_hold=min_hold)
     labels, posteriors = infer_regime_multiscale(
@@ -871,17 +996,10 @@ class WassersteinClusterer:
         dists = [self.wdist(dist, c) for c in self.centroids]
         return int(np.argmin(dists))
 
-    def should_refit(self) -> bool:
-        self.counter += 1
-        if self.counter >= self.refit_freq:
-            self.counter = 0
-            return True
-        return False
-
     def summary(self):
         if self.centroids is None:
-            print("WassersteinClusterer: not fitted.")
+            _log.info("WassersteinClusterer: not fitted.")
             return
-        print("\nWasserstein Cluster Summary:")
+        _log.info("Wasserstein Cluster Summary:")
         for i, c in enumerate(self.centroids):
-            print(f"  Cluster {i}: len={len(c)}, mean={np.mean(c):.4f}, var={np.var(c):.6f}")
+            _log.info("  Cluster %d: len=%d, mean=%.4f, var=%.6f", i, len(c), np.mean(c), np.var(c))
